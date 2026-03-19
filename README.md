@@ -3,6 +3,7 @@
 > A recursive, multi-agent research system that performs deep research on any topic and generates comprehensive reports. Features fully sequential execution for constant memory usage.
 
 ## Table of Contents
+
 - [Quick Start](#quick-start)
 - [What This Does](#what-this-does)
 - [Key Features](#key-features)
@@ -21,6 +22,7 @@
 ## Quick Start
 
 ### 1. Install (30 seconds)
+
 ```bash
 cd ResearchAI
 python3 -m venv venv
@@ -29,6 +31,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure (Edit .env file)
+
 ```bash
 # Required: Get your key at https://openrouter.ai/keys
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
@@ -43,11 +46,12 @@ MAX_CONCURRENT_TASKS=1   # 1=sequential, 4=parallel
 ```
 
 ### 3. Run Research
+
 ```bash
 python -m research_ai.cli "Your research topic here"
 ```
 
-Output saved to: `research_report.md` (moved to `output/` folder after completion)
+Output saved to: `research_report.md`
 
 ---
 
@@ -72,6 +76,7 @@ Root Agent: Fetches 50 sources, summarizes, derives subtopics
 ```
 
 Each agent:
+
 1. Fetches N sources (default: 50) from the web
 2. Summarizes each source with LLM
 3. Derives child topics from summaries
@@ -79,6 +84,7 @@ Each agent:
 5. Continues recursively up to MAX_DEPTH levels
 
 **Final Output**: A comprehensive Markdown report with:
+
 - 200-word executive summary
 - Table of contents
 - Detailed sections for each researched topic
@@ -90,27 +96,32 @@ Each agent:
 ## Key Features
 
 ### 🎯 Deep, Recursive Research
+
 - Agents spawn sub-agents up to configurable depth
 - Each agent specializes in a subtopic
 - Potentially thousands of sources analyzed
 
 ### 🔒 Sequential Execution (Default)
+
 - **Only 1 operation at a time** when `MAX_CONCURRENT_TASKS=1`
 - Constant memory usage (~500MB) regardless of depth
 - Scales by TIME only, not resources
 - Safe for limited hardware (4GB RAM)
 
 ### ⚡ Configurable Parallelism
+
 - Increase `MAX_CONCURRENT_TASKS` for faster results
 - Trade memory for speed when you have RAM
 - Up to 8× faster with more concurrent tasks
 
 ### 🌐 Real Web Search
+
 - Uses OpenRouter's web plugin (recommended)
 - Fallback to direct HTTP search (Bing/Wikipedia/arXiv)
 - Fetches actual online sources, not simulated data
 
 ### 📊 Progress Tracking
+
 - Real-time logs of pending/in-progress/done tasks
 - API call and token usage monitoring
 - Detailed task start/completion logs
@@ -118,6 +129,7 @@ Each agent:
 - Configurable via `NO_COLOR`, `FORCE_COLOR`, `LOG_TIMESTAMPS`
 
 ### 💰 Budget Controls
+
 - Optional limits on tokens, calls, time, cost
 - Automatic stopping when budgets exceeded
 
@@ -126,19 +138,22 @@ Each agent:
 ## Installation
 
 ### Prerequisites
+
 - Python 3.9 or higher
-- 4GB RAM minimum (8GB+ recommended for parallel execution)
+- 1GB RAM minimum (2-4GB+ recommended for parallel execution)
 - Internet connection
 - OpenRouter API key (free tier available)
 
 ### Steps
 
 1. **Clone or navigate to the project**:
+
    ```bash
    cd /path/to/ResearchAI
    ```
 
 2. **Create virtual environment**:
+
    ```bash
    python3 -m venv venv
    source venv/bin/activate  # Linux/Mac
@@ -147,6 +162,7 @@ Each agent:
    ```
 
 3. **Install dependencies**:
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -174,7 +190,7 @@ OPENROUTER_LOG=1  # Log API requests (1=on, 0=off)
 
 # Research Scope
 MAX_DEPTH=5         # Recursion depth (2-10)
-MAX_CHILDREN=12     # Children per agent (2-20)  
+MAX_CHILDREN=12     # Children per agent (2-20)
 SOURCE_COUNT=50     # Sources to fetch per topic (10-100)
 
 # Resource Control (CRITICAL!)
@@ -185,12 +201,9 @@ MAX_CONCURRENT_TASKS=1    # System-wide parallelism limit
 
 CONCURRENCY=1       # Number of worker coroutines (usually 1)
 
-# Data Sources
-CONNECTOR=openrouter_web  # openrouter_web, http, simulated, arxiv
-
 # Output and Storage
 OUTPUT_PATH=research_report.md
-DB_PATH=research_ai/state.db
+DB_PATH=runtime/research_ai/state.db
 
 # Progress Logging
 PROGRESS_LOG=1                  # Enable progress logs
@@ -224,6 +237,7 @@ See all models: https://openrouter.ai/models
 ### Configuration Presets
 
 #### Quick Test (5 min, 500MB RAM)
+
 ```bash
 MAX_DEPTH=2
 MAX_CHILDREN=3
@@ -232,6 +246,7 @@ SOURCE_COUNT=10
 ```
 
 #### Standard Research (1 hour, 500MB RAM)
+
 ```bash
 MAX_DEPTH=3
 MAX_CHILDREN=5
@@ -240,6 +255,7 @@ SOURCE_COUNT=25
 ```
 
 #### Deep Dive (4+ hours, 500MB RAM)
+
 ```bash
 MAX_DEPTH=4
 MAX_CHILDREN=8
@@ -248,6 +264,7 @@ SOURCE_COUNT=50
 ```
 
 #### Fast Research (30 min, 2GB RAM)
+
 ```bash
 MAX_DEPTH=3
 MAX_CHILDREN=5
@@ -266,6 +283,7 @@ python -m research_ai.cli "Your research topic here"
 ```
 
 The system will:
+
 1. Load configuration from `.env`
 2. Initialize database and connectors
 3. Create root agent for your topic
@@ -297,7 +315,7 @@ When `PROGRESS_LOG=1` (default), you'll see:
 
 ```bash
 [config] MAX_CONCURRENT_TASKS=1 (controls system-wide parallelism)
-[config] connector=openrouter_web
+[config] connector=web_search
 [progress] job=job-abc123 started depth=5 children=12 concurrency=1 max_concurrent_tasks=1
 
 [worker:0] start task=task-xyz depth=1 topic=Machine learning applications
@@ -309,7 +327,10 @@ When `PROGRESS_LOG=1` (default), you'll see:
 [progress] pending=150 in_progress=1 done=23 llm_calls=47 llm_tokens=12450
 ```
 
+With a progress bar at the bottom.
+
 **Key metrics**:
+
 - **pending**: Tasks waiting to be processed
 - **in_progress**: Currently running tasks (≤ MAX_CONCURRENT_TASKS)
 - **done**: Completed tasks
@@ -383,12 +404,12 @@ Result: Memory constant (~500MB) regardless of depth
 
 ### Sequential vs Parallel
 
-| MAX_CONCURRENT_TASKS | Behavior | Memory | Speed | Use Case |
-|---------------------|----------|--------|-------|----------|
-| 1 | Fully sequential | 500MB | 1× | 4-8GB RAM, stability |
-| 2 | Limited parallel | 1GB | 1.8× | 8-16GB RAM, balanced |
-| 4 | Limited parallel | 2GB | 3.5× | 16GB+ RAM, faster |
-| 8 | High parallel | 4GB | 6× | 32GB+ RAM, fastest |
+| MAX_CONCURRENT_TASKS | Behavior         | Memory | Speed | Use Case            |
+| -------------------- | ---------------- | ------ | ----- | ------------------- |
+| 1                    | Fully sequential | 500MB  | 1×    | <1GB RAM, stability |
+| 2                    | Limited parallel | 1GB    | 1.8×  | <2GB RAM, balanced  |
+| 4                    | Limited parallel | 2GB    | 3.5×  | <4GB RAM, faster    |
+| 8                    | High parallel    | 4GB    | 6×    | <8GB RAM, fastest   |
 
 ### Memory Scaling
 
@@ -398,7 +419,7 @@ Result: Memory constant (~500MB) regardless of depth
 depth=2, children=2, MAX_CONCURRENT_TASKS=1
 → ~7 agents, 5 minutes, 500MB
 
-depth=100, children=1000, MAX_CONCURRENT_TASKS=1  
+depth=100, children=1000, MAX_CONCURRENT_TASKS=1
 → ~10^300 agents, years, 500MB (still constant!)
 ```
 
@@ -406,14 +427,14 @@ Only **time** increases with depth, not resources.
 
 ### Scaling Characteristics
 
-| Agents | MAX_CONCURRENT_TASKS=1 | =2 | =4 | =8 |
-|--------|----------------------|-----|-----|-----|
-| 10 | 8 min | 4 min | 2 min | 1 min |
-| 40 | 30 min | 15 min | 8 min | 4 min |
-| 100 | 75 min | 38 min | 20 min | 10 min |
-| 1000 | 12.5 hrs | 6.3 hrs | 3.1 hrs | 1.6 hrs |
+| Agents | MAX_CONCURRENT_TASKS=1 | =2      | =4      | =8      |
+| ------ | ---------------------- | ------- | ------- | ------- |
+| 10     | 8 min                  | 4 min   | 2 min   | 1 min   |
+| 40     | 30 min                 | 15 min  | 8 min   | 4 min   |
+| 100    | 75 min                 | 38 min  | 20 min  | 10 min  |
+| 1000   | 12.5 hrs               | 6.3 hrs | 3.1 hrs | 1.6 hrs |
 
-*Assumes 45 seconds per agent average*
+_Assumes 45 seconds per agent average_
 
 ---
 
@@ -437,25 +458,17 @@ ResearchAI/
 │   ├── executor_limiter.py      # Global concurrency control ★
 │   ├── logger.py                # Colored console logging utility ★
 │   ├── runner.py                # Standalone single-job runner
-│   ├── state.db                 # SQLite database (auto-created)
-│   └── connectors/              # Source retrieval plugins
-│       ├── __init__.py          # Package marker
-│       ├── openrouter_web.py    # OpenRouter web plugin (recommended)
-│       ├── http.py              # Bing/Wikipedia/arXiv search
-│       ├── simulated.py         # Fake data for testing
-│       ├── arxiv.py             # ArXiv papers only
-│       └── shopping.py          # Product comparison (placeholder)
+│   └── web_search.py            # Web search connector
 │
-├── output/                       # Generated files (auto-created)
-│   ├── research_report.md       # Final research report
-│   ├── state_test.db            # Test database
-│   └── *.md                     # Other generated reports
+├── runtime/                      # Runtime data (auto-created)
+│   ├── research_ai/
+│   │   ├── state.db             # SQLite database (auto-created)
+│   │   └── artifacts/           # Cached source documents (SHA-256 filenames)
+│   │       └── *.txt
+│   └── artifacts/               # Additional artifact storage
 │
-├── artifacts/                    # Raw text artifacts (auto-created)
-│   └── *.txt                    # Cached source documents (SHA-256 filenames)
-│
-├── tests/                        # Test suite
-│   └── test_smoke.py            # Basic smoke test
+├── Example_output/               # Example generated reports
+│   └── *.md                     # Sample research reports
 │
 └── venv/                         # Python virtual environment
 ```
@@ -463,27 +476,26 @@ ResearchAI/
 ### What Each Folder Contains
 
 **`research_ai/`** - Core application code
+
 - Main modules for orchestration, agents, LLM, storage
 - **executor_limiter.py**: Controls sequential execution
 - **logger.py**: Colored console logging with category-based formatting
 - **runner.py**: Standalone single-job runner for quick testing
+- **web_search.py**: Web search connector for fetching sources
+
+**`runtime/`** - Runtime data and caches
+
 - **state.db**: SQLite database with jobs, tasks, agents, results
+- **artifacts/**: Cached raw source documents (named by SHA-256 hash)
+- Auto-created on first run
+- Safe to delete (will regenerate, but loses history)
 
-**`output/`** - Generated research reports and test files
-- All `.md` reports move here after generation
-- Database files from test runs
-- Safe to delete (will regenerate)
+**`Example_output/`** - Example research reports
 
-**`artifacts/`** - Cached raw source documents
-- Agents save fetched documents here (named by SHA-256 hash)
-- Avoids re-fetching same sources
-- Can be deleted to clear cache
-
-**`tests/`** - Test suite
-- `test_smoke.py`: Basic end-to-end test with simulated connector
-- Run with: `python -m pytest tests/`
+- Sample generated reports for reference
 
 **`venv/`** - Python virtual environment
+
 - Isolated Python packages
 - Created with `python -m venv venv`
 - Activate before running
@@ -493,40 +505,36 @@ ResearchAI/
 
 ### Files You Should Edit
 
-| File | Purpose |
-|------|---------|
-| **`.env`** | Your main configuration — API key, research parameters, resource limits |
-| **Topic argument** | When running: `python -m research_ai.cli "Your topic here"` |
+| File               | Purpose                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| **`.env`**         | Your main configuration — API key, research parameters, resource limits |
+| **Topic argument** | When running: `python -m research_ai.cli "Your topic here"`             |
 
 ### Files You Might Edit (Advanced)
 
-| File | Purpose |
-|------|---------|
-| `research_ai/*.py` | If extending the system |
-| `tests/*.py` | If adding more tests |
-| `.gitignore` | If you want to track different files |
+| File               | Purpose                              |
+| ------------------ | ------------------------------------ |
+| `research_ai/*.py` | If extending the system              |
+| `.gitignore`       | If you want to track different files |
 
 ### Files/Folders You Shouldn't Touch
 
-| Folder | Purpose | Can Delete? |
-|--------|---------|-------------|
-| `output/` | Auto-generated reports | ✅ Yes (will regenerate) |
-| `artifacts/` | Cached sources (SHA-256 named) | ✅ Yes (will re-fetch) |
-| `venv/` | Managed by pip | ✅ Yes (must recreate) |
-| `__pycache__/` | Python bytecode cache | ✅ Yes |
+| Folder            | Purpose                        | Can Delete?              |
+| ----------------- | ------------------------------ | ------------------------ |
+| `runtime/`        | Runtime data and caches        | ✅ Yes (will regenerate) |
+| `Example_output/` | Example reports                | ✅ Yes                   |
+| `venv/`           | Managed by pip                 | ✅ Yes (must recreate)   |
+| `__pycache__/`    | Python bytecode cache          | ✅ Yes                   |
 
 ### What is `state.db`?
 
-SQLite database storing jobs, tasks, agents, and results. Created automatically on first run. Safe to delete (will recreate, but loses history).
+SQLite database storing jobs, tasks, agents, and results. Located in `runtime/research_ai/`. Created automatically on first run. Safe to delete (will recreate, but loses history).
 
 ### Cleaning Up
 
 ```bash
-# Clear all generated files
-rm -rf output/
-
-# Clear cached sources (forces re-fetch)
-rm -rf artifacts/
+# Clear all runtime data (reports, cache, database)
+rm -rf runtime/
 
 # Clear Python cache
 find . -type d -name __pycache__ -exec rm -rf {} +
@@ -541,21 +549,19 @@ rm -rf venv/
 - `research_ai/` — Core application code
 - `requirements.txt` — Dependency list
 - `README.md` — Documentation
-- `tests/` — Test suite
 
 ### Quick Reference
 
-| Folder/File | Purpose | Edit? | Delete? |
-|-------------|---------|-------|---------|
-| `research_ai/` | Application code | Advanced | No |
-| `output/` | Generated reports | No | Yes |
-| `artifacts/` | Cached sources | No | Yes |
-| `tests/` | Test suite | Advanced | No |
-| `venv/` | Virtual environment | No | Yes* |
-| `.env` | Configuration | **Yes** | No |
-| `requirements.txt` | Dependencies | Advanced | No |
+| Folder/File        | Purpose             | Edit?    | Delete? |
+| ------------------ | ------------------- | -------- | ------- |
+| `research_ai/`     | Application code    | Advanced | No      |
+| `runtime/`         | Runtime data/caches | No       | Yes     |
+| `Example_output/`  | Example reports     | No       | Yes     |
+| `venv/`            | Virtual environment | No       | Yes\*   |
+| `.env`             | Configuration       | **Yes**  | No      |
+| `requirements.txt` | Dependencies        | Advanced | No      |
 
-*Can delete venv/ but must recreate and reinstall packages
+\*Can delete venv/ but must recreate and reinstall packages
 
 </details>
 
@@ -604,6 +610,7 @@ CONCURRENCY=4
 Total agents ≈ `SUM(MAX_CHILDREN^depth for depth in 0..MAX_DEPTH)`
 
 Examples:
+
 - depth=2, children=2: 1 + 2 + 4 = **7 agents**
 - depth=3, children=3: 1 + 3 + 9 + 27 = **40 agents**
 - depth=3, children=5: 1 + 5 + 25 + 125 = **156 agents**
@@ -617,6 +624,7 @@ Average Time Per Agent ≈ 30-60 seconds (fetch + LLM calls)
 ```
 
 Examples:
+
 - 7 agents, MAX_CONCURRENT_TASKS=1: 7 × 45s = **~5 minutes**
 - 156 agents, MAX_CONCURRENT_TASKS=1: 156 × 45s = **~2 hours**
 - 156 agents, MAX_CONCURRENT_TASKS=4: 156/4 × 45s = **~30 minutes**
@@ -630,29 +638,30 @@ Examples:
 **Symptoms**: Report says "No online sources were retrieved for this topic"
 
 **Solutions**:
+
 1. Check OpenRouter API key is valid in `.env`
 2. Verify network connectivity: `ping openrouter.ai`
 3. Check OpenRouter privacy settings: https://openrouter.ai/settings/privacy
    - Ensure data policy allows external requests
-4. Try different connector: `CONNECTOR=http` in `.env`
-5. Check console logs for specific error messages
+4. Check console logs for specific error messages
 
 ### Blank or Very Short Reports
 
 **Symptoms**: Report has few sections or mostly empty content
 
 **Solutions**:
+
 1. Increase `SOURCE_COUNT` to 50 or more
 2. Check console for errors during source fetching
 3. Verify LLM is working: `llm_calls > 0` in progress logs
-4. Try `CONNECTOR=openrouter_web` if using `http`
-5. Increase `MAX_DEPTH` to get more coverage
+4. Increase `MAX_DEPTH` to get more coverage
 
 ### Out of Memory Errors
 
 **Symptoms**: Process crashes, system becomes unresponsive
 
 **Solutions**:
+
 1. Ensure `MAX_CONCURRENT_TASKS=1` in `.env`
 2. Reduce `MAX_DEPTH` to 2 or 3
 3. Reduce `MAX_CHILDREN` to 2 or 3
@@ -665,6 +674,7 @@ Examples:
 **Symptoms**: "Rate limit exceeded" or HTTP 429 errors
 
 **Solutions**:
+
 1. Set `MAX_CONCURRENT_TASKS=1` (slower but stays under limits)
 2. Use free models with higher limits: `arcee-ai/trinity-large-preview:free`
 3. Check OpenRouter dashboard for your account limits
@@ -676,6 +686,7 @@ Examples:
 **Symptoms**: Hours passing with minimal completed agents
 
 **Solutions**:
+
 1. Check `MAX_DEPTH` isn't too high (each level multiplies agents exponentially)
 2. Monitor `pending` count in logs (should decrease over time)
 3. Verify network isn't dropping connections: `ping openrouter.ai`
@@ -688,6 +699,7 @@ Examples:
 **Symptoms**: Same information appears multiple times
 
 **Solutions**:
+
 1. System has automatic deduplication, but some repetition is expected
 2. Agents exploring similar topics may find overlapping sources
 3. This is normal for broad topics
@@ -707,11 +719,10 @@ Examples:
 **Symptoms**: No tasks being processed, `in_progress` always 0
 
 **Solutions**:
+
 1. Check console for error messages
-2. Verify connector is working: try `CONNECTOR=simulated` for testing
-3. Check OpenRouter API key is correct
-4. Ensure `.env` file is being loaded (check startup logs)
-5. Try running smoke test: `python -m pytest tests/test_smoke.py`
+2. Check OpenRouter API key is correct
+3. Ensure `.env` file is being loaded (check startup logs)
 
 ---
 
@@ -749,41 +760,46 @@ CLI → Load .env → Initialize ExecutorLimiter
 ### Component Responsibilities
 
 **ExecutorLimiter** (`executor_limiter.py`)
+
 - Singleton pattern
 - Creates ThreadPoolExecutor with `max_workers=MAX_CONCURRENT_TASKS`
 - Creates asyncio.Semaphore with same limit
 - Provides `get_executor()`, `get_semaphore()`, `get_max_tasks()`
 
 **Orchestrator** (`orchestrator.py`)
+
 - Spawns `CONCURRENCY` worker coroutines
 - Workers claim tasks from datastore
 - Workers run agents (blocked by semaphore)
 - Tracks progress, handles budgets
 
 **Agent** (`agent.py`)
+
 - Fetches sources via connector (blocked by semaphore)
 - Summarizes each source via LLM (blocked by semaphore)
 - Derives subtopics from summaries
 - Spawns child agents via orchestrator.enqueue()
 
 **LLM** (`llm.py`)
+
 - Wraps OpenRouter/OpenAI API calls
 - `summarize_async()`: Async with concurrency control
 - `summarize_to_200_words_async()`: For report exec summary
 - Tracks usage: calls, tokens
 
-**Connectors** (`connectors/`)
-- `openrouter_web.py`: Uses OpenRouter web plugin
-- `http.py`: Direct web search (Bing/Wikipedia/arXiv)
-- `simulated.py`: Fake data for testing
-- All use global executor and semaphore
+**Web Search** (`web_search.py`)
+
+- Handles web search and source fetching
+- Uses global executor and semaphore
 
 **Datastore** (`datastore.py`)
+
 - SQLite persistence layer
 - Tables: jobs, tasks, agents, artifacts, embeddings
 - `claim_next_task()`: Race-free task claiming (BEGIN IMMEDIATE)
 
 **ReportGenerator** (`report.py`)
+
 - Aggregates agent results
 - Generates executive summary
 - Writes streaming Markdown report
@@ -877,7 +893,7 @@ class CustomConnector:
         semaphore = get_semaphore()
         async with semaphore:
             return await loop.run_in_executor(executor, self._sync_fetch, topic, n)
-    
+
     def _sync_fetch(self, topic: str, n: int):
         # Your sync implementation here
         return [{"title": "...", "url": "...", "text": "..."}]
@@ -1009,6 +1025,7 @@ Subclass `Agent` in `agent.py` and override `run()` or `_derive_subtopics()`.
 ## Acknowledgments
 
 Built with:
+
 - OpenRouter API for LLM access
 - SQLite for persistence
 - asyncio for concurrency control
@@ -1018,6 +1035,7 @@ Built with:
 ---
 
 **Ready to start?** Edit `.env` with your API key and run:
+
 ```bash
 python -m research_ai.cli "Your fascinating research topic"
 ```
