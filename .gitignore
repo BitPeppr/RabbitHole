@@ -4,8 +4,8 @@ env/
 ENV/
 .venv/
 
-#Runtime files
-*.txt
+# Runtime files
+runtime/**/*.txt
 *.db
 *.db-wal
 *.db-shm
