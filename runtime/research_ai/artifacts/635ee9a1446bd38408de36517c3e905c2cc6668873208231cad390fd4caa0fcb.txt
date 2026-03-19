@@ -1,1 +1,0 @@
-SNOBOL is a series of programming languages developed between 1962 and 1967 at AT&T Bell Laboratories by David J. Farber, Ralph Griswold and Ivan P. Polonsky, culminating in SNOBOL4. It was one of a number of text-string-oriented languages developed during the 1950s and 1960s; others included COMIT and TRAC. Despite the similar name, it is entirely unlike COBOL.

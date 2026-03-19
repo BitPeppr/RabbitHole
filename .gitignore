@@ -4,6 +4,13 @@ env/
 ENV/
 .venv/
 
+#Runtime files
+*.txt
+*.db
+*.db-wal
+*.db-shm
+
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,1 +1,0 @@
-In computing, a polyglot is a computer program or script written in a valid form of multiple programming languages or file formats. The name was coined by analogy to multilingualism. A polyglot file is composed by combining syntax from two or more different formats.
