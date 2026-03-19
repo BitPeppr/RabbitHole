@@ -30,7 +30,7 @@ class ReportGenerator:
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(f"# {self.root_topic}\n\n")
-            f.write("## Executive Summary\n\n")
+            f.write("## Summary\n\n")
             f.write(exec_summary + "\n\n")
             f.write("---\n\n")
             f.write(report_body)
@@ -51,6 +51,16 @@ class ReportGenerator:
         if not combined_text.strip():
             return "No content available to synthesize.\n"
         
+        # Read word count range from environment
+        try:
+            min_words = int(os.environ.get("REPORT_MIN_WORDS", "500"))
+        except ValueError:
+            min_words = 500
+        try:
+            max_words = int(os.environ.get("REPORT_MAX_WORDS", "1000"))
+        except ValueError:
+            max_words = 1000
+        
         prompt = f"""Based on the following research summaries about "{self.root_topic}", write a well-organized report.
 
 IMPORTANT GUIDELINES:
@@ -67,7 +77,7 @@ IMPORTANT GUIDELINES:
 Research summaries:
 {combined_text[:12000]}
 
-Write the organized report (markdown format, 500-1000 words):"""
+Write the organized report (markdown format, {min_words}-{max_words} words):"""
 
         if self.llm.use_openrouter or self.llm.use_openai:
             try:

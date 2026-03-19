@@ -90,6 +90,8 @@ class Orchestrator:
                 w.cancel()
             await asyncio.gather(*self.workers, return_exceptions=True)
             self.workers = []
+        # Finalize TUI mode (print newline after progress bar)
+        log.finalize_tui()
         # collect results
         results = self.datastore.get_all_agent_results(job_id=self.job_id)
         report = ReportGenerator(llm=self.llm, results=results, root_topic=topic)

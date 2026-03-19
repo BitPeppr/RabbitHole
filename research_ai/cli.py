@@ -6,6 +6,7 @@ Only a single positional topic argument is accepted; all other settings are load
 
 import asyncio
 import os
+import signal
 import sys
 
 from .datastore import Datastore
@@ -13,6 +14,19 @@ from .llm import LLM
 from .web_search import WebSearchConnector
 from .orchestrator import Orchestrator
 from .logger import log
+
+
+def _handle_interrupt(signum, frame):
+    """Handle Ctrl+C cleanly - immediate exit with clean message."""
+    # Finalize TUI mode if active (print newline after progress bar)
+    log.finalize_tui()
+    print("\n\033[33m⚡ Task cancelled\033[0m")
+    # Use os._exit to forcefully terminate without waiting for threads
+    os._exit(0)
+
+
+# Install signal handler early
+signal.signal(signal.SIGINT, _handle_interrupt)
 
 
 def _load_dotenv(path: str = ".env"):
@@ -78,10 +92,7 @@ async def main_async(topic: str):
 
 def main():
     topic = sys.argv[1] if len(sys.argv) > 1 else "Sample topic: impacts of AI on labor"
-    try:
-        asyncio.run(main_async(topic))
-    except KeyboardInterrupt:
-        print("Interrupted", file=sys.stderr)
+    asyncio.run(main_async(topic))
 
 
 if __name__ == "__main__":

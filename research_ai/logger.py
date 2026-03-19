@@ -2,6 +2,10 @@
 
 Provides thread-safe colored console logging with category-based formatting.
 Respects NO_COLOR and FORCE_COLOR environment variables.
+
+Supports two display modes via PROGRESS_DISPLAY_MODE env var:
+- "tui": Sticky progress bar at bottom of terminal (updated in-place)
+- "scroll": Standard scrolling logs (default)
 """
 
 import os
@@ -22,6 +26,17 @@ class Colors:
     DIM = "\033[2m"
 
 
+# ANSI cursor control codes
+class Cursor:
+    SAVE = "\033[s"           # Save cursor position
+    RESTORE = "\033[u"        # Restore cursor position
+    MOVE_TO_BOTTOM = "\033[999;1H"  # Move to row 999 (will clamp to bottom)
+    CLEAR_LINE = "\033[2K"    # Clear entire line
+    MOVE_UP = "\033[1A"       # Move cursor up one line
+    HIDE = "\033[?25l"        # Hide cursor
+    SHOW = "\033[?25h"        # Show cursor
+
+
 def _supports_color() -> bool:
     """Detect if terminal supports colors."""
     # FORCE_COLOR=1 always enables colors
@@ -39,6 +54,22 @@ def _supports_color() -> bool:
 def _should_timestamp() -> bool:
     """Check if timestamps should be included."""
     return os.environ.get("LOG_TIMESTAMPS", "").lower() in ("1", "true", "yes")
+
+
+def _get_display_mode() -> str:
+    """Get progress display mode: 'tui' for sticky bar, 'scroll' for normal."""
+    mode = os.environ.get("PROGRESS_DISPLAY_MODE", "scroll").lower()
+    return mode if mode in ("tui", "scroll") else "scroll"
+
+
+def _get_terminal_size() -> tuple:
+    """Get terminal size (columns, rows). Returns (80, 24) as fallback."""
+    try:
+        import shutil
+        size = shutil.get_terminal_size((80, 24))
+        return (size.columns, size.lines)
+    except Exception:
+        return (80, 24)
 
 
 def format_tokens(count: int) -> str:
@@ -91,11 +122,25 @@ def make_progress_bar(percent: float, width: int = 20, use_color: bool = True) -
 
 
 class Logger:
-    """Thread-safe colored logger with category-based formatting."""
+    """Thread-safe colored logger with category-based formatting.
+    
+    Supports two display modes:
+    - scroll: Standard logging with each message on a new line
+    - tui: Progress bar stays at bottom of terminal, updated in-place
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
         self._use_color = _supports_color()
+        self._tui_mode = None  # Lazy-evaluated on first use
+        self._progress_line = ""  # Last progress bar content for TUI mode
+        self._tui_initialized = False
+
+    def _is_tui_mode(self) -> bool:
+        """Check if TUI mode is enabled (lazy evaluation to allow .env loading)."""
+        if self._tui_mode is None:
+            self._tui_mode = _get_display_mode() == "tui"
+        return self._tui_mode
 
     def _colorize(self, text: str, color: str) -> str:
         """Apply color to text if colors are enabled."""
@@ -110,9 +155,31 @@ class Logger:
         return datetime.now().strftime("%H:%M:%S ")
 
     def _print(self, message: str):
-        """Thread-safe print."""
+        """Thread-safe print. In TUI mode, prints above the sticky progress bar."""
         with self._lock:
-            print(message)
+            if self._is_tui_mode() and self._tui_initialized and self._progress_line:
+                # Clear current line, print message with newline, then redraw progress bar
+                sys.stdout.write(f"\r{Cursor.CLEAR_LINE}{message}\n{self._progress_line}")
+                sys.stdout.flush()
+            else:
+                print(message)
+
+    def _print_progress_tui(self, message: str):
+        """Print progress bar in TUI mode (sticky at current line, updated in-place)."""
+        with self._lock:
+            self._progress_line = message
+            # Always update in place: carriage return, clear line, print new content
+            sys.stdout.write(f"\r{Cursor.CLEAR_LINE}{message}")
+            sys.stdout.flush()
+            self._tui_initialized = True
+
+    def finalize_tui(self):
+        """Call at end of job to finalize TUI mode (print newline after progress bar)."""
+        if self._is_tui_mode() and self._tui_initialized:
+            with self._lock:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                self._tui_initialized = False
 
     def config(self, message: str):
         """Log configuration/startup info (blue)."""
@@ -239,7 +306,11 @@ class Logger:
             f"(+{in_progress} active) "
             f"llm: {llm_calls} calls, {tokens_fmt} tokens"
         )
-        self.progress(msg)
+        # In TUI mode, update progress bar in-place; otherwise use standard logging
+        if self._is_tui_mode():
+            self._print_progress_tui(msg)
+        else:
+            self.progress(msg)
 
     def job_started(
         self,

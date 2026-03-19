@@ -450,9 +450,14 @@ class LLM:
     def summarize_to_200_words(self, text: str) -> str:
         if not text:
             return ""
+        # Read target word count from environment (default 200)
+        try:
+            target_words = int(os.environ.get("SUMMARY_WORD_COUNT", "200"))
+        except ValueError:
+            target_words = 200
         if self.use_openrouter:
             try:
-                messages = [{"role": "user", "content": "Write a ~200-word executive summary of the following text:\n\n" + text}]
+                messages = [{"role": "user", "content": f"Write a ~{target_words}-word summary of the following text:\n\n" + text}]
                 content, _ = self._call_openrouter(messages, temperature=0.0)
                 if content:
                     return content.strip()
@@ -462,23 +467,24 @@ class LLM:
             try:
                 resp = self.openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "Write a ~200-word executive summary of the following text:\n\n" + text}],
+                    messages=[{"role": "user", "content": f"Write a ~{target_words}-word summary of the following text:\n\n" + text}],
                     temperature=0.0,
                 )
                 self._record_usage(resp.get("usage"))
                 return resp["choices"][0]["message"]["content"].strip()
             except Exception as e:
                 log.error(f"OpenAI error: {e}")
-        # fallback: greedily select ranked sentences until ~200 words
+        # fallback: greedily select ranked sentences until target words
         sentences = _split_sentences(text)
         ranked = self._rank_sentences(sentences)
         output = []
         count = 0
+        target_fallback = max(50, target_words - 10)
         for s, _ in ranked:
             words = s.split()
             output.append(s)
             count += len(words)
-            if count >= 190:
+            if count >= target_fallback:
                 break
         try:
             self.usage["calls"] += 1
@@ -489,14 +495,19 @@ class LLM:
             pass
         return " ".join(output)
     
-    async def summarize_to_200_words_async(self, text: str) -> str:
-        """Async 200-word summary with global concurrency control."""
+    async def summarize_to_words_async(self, text: str, target_words: int = None) -> str:
+        """Async summary with configurable word count and global concurrency control."""
         from .executor_limiter import get_executor, get_semaphore
         loop = asyncio.get_event_loop()
         executor = get_executor()
         semaphore = get_semaphore()
         async with semaphore:
             return await loop.run_in_executor(executor, self.summarize_to_200_words, text)
+
+    # Keep old name for backward compatibility
+    async def summarize_to_200_words_async(self, text: str) -> str:
+        """Async summary with global concurrency control. Word count read from SUMMARY_WORD_COUNT env var."""
+        return await self.summarize_to_words_async(text)
 
     def _extractive_summary(self, text: str, max_sentences: int = 5) -> str:
         sentences = _split_sentences(text)
