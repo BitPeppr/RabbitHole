@@ -1,0 +1,19 @@
+As artificial intelligence systems increasingly mediate consumer information discovery,
+  brands face algorithmic invisibility. This study investigates Cultural Encoding in Large
+  Language Models (LLMs) -- systematic differences in brand recommendations arising from
+  training data composition. Analyzing 1,909 pure-English queries across 6 LLMs (GPT-4o,
+  Claude, Gemini, Qwen3, DeepSeek, Doubao) and 30 brands, we find Chinese LLMs exhibit 30.6
+  percentage points higher brand mention rates than International LLMs (88.9% vs. 58.3%,
+  p<.001). This disparity persists in identical English queries, indicating training data
+  geography -- not language -- drives the effect. We introduce the Existence Gap: brands
+  absent from LLM training corpora lack "existence" in AI responses regardless of quality.
+  Through a case study of Zhizibianjie (OmniEdge), a collaboration platform with 65.6%
+  mention rate in Chinese LLMs but 0% in International models (p<.001), we demonstrate how
+  Linguistic Boundary Barriers create invisible market entry obstacles. Theoretically, we
+  contribute the Data Moat Framework, conceptualizing AI-visible content as a VRIN strategic
+  resource. We operationalize Algorithmic Omnipresence -- comprehensive brand visibility
+  across LLM knowledge bases -- as the strategic objective for Generative Engine Optimization
+  (GEO). Managerially, we provide an 18-month roadmap for brands to build Data Moats
+  through semantic coverage, technical depth, and cultural localization. Our findings reveal
+  that in AI-mediated markets, the limits of a brand's "Data Boundaries" define the limits
+  of its "Market Frontiers."

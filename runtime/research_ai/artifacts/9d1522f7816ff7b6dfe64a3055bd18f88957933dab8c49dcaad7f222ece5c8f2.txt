@@ -1,0 +1,64 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<title>prepare | Dictionaries and vocabulary tools for English language learners | Wordsmyth</title>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+<meta name="keywords" content="dictionary, thesaurus, example sentences, wordsmyth, prepare, definition of prepare, derivation for prepare, prepared, preparer, prepare as transitive verb, prepare as intransitive verb, similar word for prepare, arrange, break in, condition, equip, fix, get, lay, make, mount, prep, qualify, set, prime, synonym for prepare, ready, blend, concoct, fabricate, manufacture, process, produce, whip up, compose, gear up, provide, psych up" />
+<meta name="description" content="The meaning of prepare. Definition of prepare. English dictionary and integrated thesaurus for learners, writers, teachers, and students with advanced, intermediate, and beginner levels." />
+<link rel="search" type="application/opensearchdescription+xml" href="https://www.wordsmyth.net/dictionary.xml" title="Wordsmyth Dictionary-Thesaurus" />
+
+<meta property="og:title" content="Definition of PREPARE" />
+<meta property="og:site_name" content="Wordsmyth" />
+<meta property="og:image" content="https://www.wordsmyth.net/images/ws_logo.png" />
+<meta property="og:url" content="https://www.wordsmyth.net/?rid=32572&amp;level=3" />
+<meta property="og:description" content="to make ready. : to make or produce by combining various elements. : to compose, usu. for a particular occasion.... See the full definition" />
+<meta property="og:aria-text" content="Post the Definition of prepare to Facebook" />
+<meta property="twitter:title" content="Definition of PREPARE" />
+<meta property="twitter:image" content="https://www.wordsmyth.net/images/ws_logo.png" />
+<meta property="twitter:url" content="https://www.wordsmyth.net/?rid=32572&amp;level=3" />
+<meta property="twitter:description" content="to make ready. : to make or produce by combining various elements. : to compose, usu. for a particular occasion.... See the full definition" />
+<meta property="twitter:card" content="summary" />
+<meta property="twitter:site" content="@WordsmythOnline" />
+<meta property="twitter:aria-text" content="Share the Definition of prepare on Twitter" />
+<meta name="google-site-verification" content="tgBCnWIXS-Bcr3-wqlOwSl5V4HLIyKtH1g1oi0cBSdI" />
+<meta name="google-site-verification" content="wiaNarRybIGaZ3JFEAtBnubfuoGiWqtfo4Mkvuhd8j8" />
+<meta name="msvalidate.01" content="BDB9F58EC82C85847FA7358AA246EBB9" />
+<link rel="shortcut icon" href="images/ws.ico" />
+<link type="text/css" rel="stylesheet" href="css/ws.css?4" />
+<link type="text/css" rel="stylesheet" href="css/login_box.css?4" />
+<!--[if IE 7]>
+<link type="text/css" rel="stylesheet" href="css/ie_7_menu.css?4" />
+<![endif]-->
+<link type="text/css" rel="stylesheet" href="css/lookup_history_box.css?4" />
+<link type="text/css" rel="stylesheet" href="css/e_menu.css?4" />
+<link type="text/css" rel="stylesheet" href="css/trial_btn.css?4" />
+<!--[if IE 7]>
+<link type="text/css" rel="stylesheet" href="css/ie_7_trial_btn.css?4" />
+<![endif]-->
+<link type="text/css" rel="stylesheet" href="/css/ws_message_box.css?4" />
+<link type="text/css" rel="stylesheet" href="/css/help_message_box.css?4" />
+<link type="text/css" rel="stylesheet" href="/css/ws_message_box.css?4" />
+<link type="text/css" rel="stylesheet" href="/css/vp_message_box.css?4" />
+<link type="text/css" rel="stylesheet" href="css/wordsmyth.css?4" />
+<link type="text/css" rel="stylesheet" href="css/wordsmyth_new.css?4" />
+<link type="text/css" rel="stylesheet" href="css/word_explorer.css?4" />
+<link type="text/css" rel="stylesheet" href="css/word_parts.css?4" />
+<link type="text/css" rel="stylesheet" href="css/word_combination.css?4" />
+<link type="text/css" rel="stylesheet" href="css/verb_pattern.css?4" />
+<link type="text/css" rel="stylesheet" href="css/wvi.css?4" />
+<link type="text/css" rel="stylesheet" href="css/ws_message_box.css?4" />
+<!--[if IE]>
+<link type="text/css" rel="stylesheet" href="css/ie_normal.css?4" />
+<![endif]-->
+<link type="text/css" rel="stylesheet" href="css/chat_bot.css?4" />
+<link type="text/css" rel="stylesheet" href="css/search_menu.css?4" />
+<link type="text/css" rel="stylesheet" href="css/search.css?4" />
+<link type="text/css" rel="stylesheet" href="css/list_control.css?4" />
+<script type="text/javascript" src="js/access.js?4"></script>
+<script type="text/javascript" src="js/array.js?4"></script>
+<script type="text/javascript" src="js/param_maker.js?4"></script>
+<script type="text/javascript" src="js/id_generator.js?4"></script>
+<script type="text/javascript" src="js/ajax_async.js?4"></script>
+<script type="text/javascript" src="js/send_time_zone.js?4"></script>
+<script type="text/javascript" src="js/flash_version.js?4"></script>
+<script type="text/javascript" s

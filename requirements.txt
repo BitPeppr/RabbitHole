@@ -1,0 +1,7 @@
+# Recommended dependencies for connectors and optional LLMs
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+# Optional (OpenAI):
+# openai>=0.27.0
+# Optional async HTTP client:
+# aiohttp>=3.8.0

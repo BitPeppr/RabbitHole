@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="referrer" content="origin-when-cross-origin">
+    <script>//<![CDATA[
+      var s = false;
+      function l() {
+        setTimeout(f, 10000);
+        if (document.referrer) {
+          try {
+            var pm = /(^|&|\?)px=([^&]*)(&|$)/i;
+            var px = window.location.href.match(pm);
+            var rs = document.referrer;
+            if (px != null) {
+              if (rs.match(pm))
+                rs = rs.replace(pm, "$1px=" + px[2] + "$3");
+              else if (rs.indexOf("?") != -1)
+                rs = rs + "&px=" + px[2];
+              else
+                rs = rs + "?px=" + px[2];
+            }
+            history.replaceState({}, "Bing", rs);
+            window.addEventListener("pageshow", function(e) { if (e.persisted || (typeof window.performance != "undefined" && window.performance.navigation.type === 2)) window.location.reload(); });
+            s = true;
+            setTimeout(r, 10);
+            return;
+          } catch (e) {}
+        }
+        r();
+      }
+      function r() {
+        var u = "https://support.google.com/earth/community-guide/259934888/google-earth-imagery-updates-and-historical-imagery?hl=en";
+        if (s)
+          window.location.href = u;
+        else
+          window.location.replace(u);
+      }
+      function f() {
+        document.getElementById("fb").style.display = "block";
+      }
+      //]]>
+    </script>
+  </head>
+  <body onload="l()">
+    <div id="fb" style="display: none">
+      Please <a href="https://www.bing.com/ck/a?!&&p=af28a46818534f7d10f914eca072314796b4d39a51a6eaec449a709e80678be4JmltdHM9MTc3Mzc5MjAwMA&ptn=3&ver=2&hsh=4&fclid=0578ae62-1347-61a8-2bd4-b94312926071&u=a1aHR0cHM6Ly9zdXBwb3J0Lmdvb2dsZS5jb20vZWFydGgvY29tbXVuaXR5LWd1aWRlLzI1OTkzNDg4OC9nb29nbGUtZWFydGgtaW1hZ2VyeS11cGRhdGVzLWFuZC1oaXN0b3JpY2FsLWltYWdlcnk_aGw9ZW4&ntb=F">click here</a> if the page does not redirect automatically ...
+    </div>
+  </body>
+</html>

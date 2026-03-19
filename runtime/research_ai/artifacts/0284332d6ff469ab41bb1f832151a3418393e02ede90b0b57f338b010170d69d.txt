@@ -1,0 +1,15 @@
+Communities for your favorite technologies.Explore all Collectives
+
+Stack Overflow for Teams is now calledStack Internal. Bring the best of human thought and AI automation together at your work.
+
+Bring the best of human thought and AI automation together at your work.Learn more
+
+Find centralized, trusted content and collaborate around the technologies you use most.
+
+Stack Internal
+
+Knowledge at work
+
+Bring the best of human thought and AI automation together at your work.
+
+For variable assignment in Make, I see := and = operator. What's the difference between them?
