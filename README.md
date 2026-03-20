@@ -5,6 +5,7 @@
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Example Outputs](#example-outputs)
 - [What This Does](#what-this-does)
 - [Key Features](#key-features)
 - [Installation](#installation)
@@ -57,6 +58,12 @@ python -m research_ai.cli "Your topic" --no-cleanup
 Output saved to: `research_report.md`
 
 Runtime files (db, cache) are stored in `$TMPDIR/researchai` and automatically cleaned up after each run. This keeps the project directory clean for packaging (pipx/homebrew).
+
+---
+
+## Example Outputs
+
+See `example output/` for sample reports. Note that "AI Ethics (2 hours)" used deeper recursion with more agents but a lower target word count, while "Uses for LLMs (6 minutes)" generated to a higher word target in 6 minutes with less recursion. Both are of quite good quality and depth.
 
 ---
 
@@ -531,12 +538,12 @@ ResearchAI/
 
 ### Files/Folders You Shouldn't Touch
 
-| Folder            | Purpose                        | Can Delete?              |
-| ----------------- | ------------------------------ | ------------------------ |
-| `runtime/`        | Runtime data and caches        | ✅ Yes (will regenerate) |
-| `Example_output/` | Example reports                | ✅ Yes                   |
-| `venv/`           | Managed by pip                 | ✅ Yes (must recreate)   |
-| `__pycache__/`    | Python bytecode cache          | ✅ Yes                   |
+| Folder            | Purpose                 | Can Delete?              |
+| ----------------- | ----------------------- | ------------------------ |
+| `runtime/`        | Runtime data and caches | ✅ Yes (will regenerate) |
+| `Example_output/` | Example reports         | ✅ Yes                   |
+| `venv/`           | Managed by pip          | ✅ Yes (must recreate)   |
+| `__pycache__/`    | Python bytecode cache   | ✅ Yes                   |
 
 ### What is `state.db`?
 
