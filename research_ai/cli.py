@@ -1,6 +1,9 @@
 """Command-line entrypoint for ResearchAI.
 
-This simplified CLI uses a .env file for configuration and only supports the OpenRouter provider.
+This simplified CLI uses a .env file for configuration. Supports:
+- Legacy single-provider mode (OPENROUTER_API_KEY)
+- Multi-provider mode with automatic load balancing (OPENROUTER_API_KEYS, GROQ_API_KEYS, etc.)
+
 Only a single positional topic argument is accepted; all other settings are loaded from the .env file.
 """
 
@@ -129,8 +132,21 @@ async def main_async(topic: str):
     log.config(f"MAX_CONCURRENT_TASKS={max_tasks} (controls system-wide parallelism)")
     log.config(f"RUNTIME_DIR={runtime_dir}")
 
-    # Force OpenRouter provider
+    # Initialize LLM (auto-detects single vs multi-provider mode)
     llm = LLM(provider="openrouter")
+    
+    # Log provider configuration
+    if llm.use_multi_provider:
+        log.config(f"Multi-provider mode enabled with {len(llm.registry)} provider instances")
+        health = llm.get_provider_health()
+        for pid, status in health.items():
+            log.config(f"  - {pid}: {status}")
+    elif llm.use_openrouter:
+        log.config("Legacy mode: OpenRouter provider")
+    elif llm.use_openai:
+        log.config("Legacy mode: OpenAI provider")
+    else:
+        log.warning("No LLM provider configured - will use local fallbacks")
 
     connector = WebSearchConnector()
     log.config("connector=web_search")

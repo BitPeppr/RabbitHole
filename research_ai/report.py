@@ -79,17 +79,28 @@ Research summaries:
 
 Write the organized report (markdown format, {min_words}-{max_words} words):"""
 
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Try multi-provider mode first
+        if self.llm.use_multi_provider:
+            try:
+                content, _ = self.llm._call_multi_provider(messages, task_type="report", temperature=0.3)
+                if content:
+                    return content.strip()
+            except Exception:
+                pass
+        
+        # Fall back to legacy single-provider mode
         if self.llm.use_openrouter or self.llm.use_openai:
             try:
                 if self.llm.use_openrouter:
-                    messages = [{"role": "user", "content": prompt}]
                     content, _ = self.llm._call_openrouter(messages, temperature=0.3)
                     if content:
                         return content.strip()
                 elif self.llm.use_openai:
                     resp = self.llm.openai.ChatCompletion.create(
                         model="gpt-3.5-turbo",
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=messages,
                         temperature=0.3,
                     )
                     return resp["choices"][0]["message"]["content"].strip()

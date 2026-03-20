@@ -1,6 +1,14 @@
 """Simple LLM wrapper with a lightweight local fallback summarizer.
 
-Supports OpenAI and OpenRouter providers. Auto-detects via environment variables or accepts an explicit provider parameter.
+Supports multiple LLM providers with automatic load balancing and failover:
+- OpenRouter (multiple keys)
+- Groq
+- Google AI Studio
+- Ollama (local)
+- OpenAI
+
+Auto-detects configuration via environment variables. Supports both legacy
+single-provider config and new multi-provider config.
 
 Uses global executor limiter to ensure strict sequential execution when MAX_CONCURRENT_TASKS=1.
 """
@@ -11,7 +19,7 @@ import json
 import asyncio
 import time
 import hashlib
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 from concurrent.futures import ThreadPoolExecutor
 
 from .logger import log
@@ -63,32 +71,49 @@ class LLM:
         self.provider = provider
         self.use_openai = False
         self.use_openrouter = False
+        self.use_multi_provider = False
+        self.registry = None
         self.usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         # Backup model from environment
         self.backup_model = os.environ.get("OPENROUTER_BACKUP_MODEL", None)
-        # Prefer explicit provider. If omitted, auto-detect (prefer OpenRouter when available).
+        
+        # Check for multi-provider configuration first
         try:
-            if provider == "openrouter" or (provider is None and os.environ.get("OPENROUTER_API_KEY")):
-                key = os.environ.get("OPENROUTER_API_KEY")
-                if key:
-                    self.openrouter_key = key
-                    self.openrouter_base = os.environ.get("OPENROUTER_API_BASE", "https://api.openrouter.ai")
-                    self.openrouter_model = os.environ.get("OPENROUTER_MODEL", "arcee-ai/trinity-large-preview:free")
-                    self.openrouter_log = os.environ.get("OPENROUTER_LOG", "1").lower() not in ("0", "false", "no")
-                    self.use_openrouter = True
-        except Exception:
-            self.use_openrouter = False
-        try:
-            if provider == "openai" or (provider is None and os.environ.get("OPENAI_API_KEY") and not self.use_openrouter):
-                key = os.environ.get("OPENAI_API_KEY")
-                if key:
-                    import openai
+            from .provider_registry import is_multi_provider_config, init_registry_from_env
+            if is_multi_provider_config():
+                self.registry = init_registry_from_env()
+                if self.registry and len(self.registry) > 0:
+                    self.use_multi_provider = True
+                    log.config(f"Multi-provider mode enabled with {len(self.registry)} providers")
+        except Exception as e:
+            log.warning(f"Failed to initialize multi-provider mode: {e}")
+            self.use_multi_provider = False
+        
+        # Fall back to legacy single-provider mode
+        if not self.use_multi_provider:
+            # Prefer explicit provider. If omitted, auto-detect (prefer OpenRouter when available).
+            try:
+                if provider == "openrouter" or (provider is None and os.environ.get("OPENROUTER_API_KEY")):
+                    key = os.environ.get("OPENROUTER_API_KEY")
+                    if key:
+                        self.openrouter_key = key
+                        self.openrouter_base = os.environ.get("OPENROUTER_API_BASE", "https://api.openrouter.ai")
+                        self.openrouter_model = os.environ.get("OPENROUTER_MODEL", "arcee-ai/trinity-large-preview:free")
+                        self.openrouter_log = os.environ.get("OPENROUTER_LOG", "1").lower() not in ("0", "false", "no")
+                        self.use_openrouter = True
+            except Exception:
+                self.use_openrouter = False
+            try:
+                if provider == "openai" or (provider is None and os.environ.get("OPENAI_API_KEY") and not self.use_openrouter):
+                    key = os.environ.get("OPENAI_API_KEY")
+                    if key:
+                        import openai
 
-                    self.openai = openai
-                    self.openai.api_key = key
-                    self.use_openai = True
-        except Exception:
-            self.use_openai = False
+                        self.openai = openai
+                        self.openai.api_key = key
+                        self.use_openai = True
+            except Exception:
+                self.use_openai = False
 
     def _record_usage(self, usage):
         if not usage:
@@ -102,7 +127,40 @@ class LLM:
             pass
 
     def get_usage(self):
+        """Get usage statistics. Combines registry usage in multi-provider mode."""
+        if self.use_multi_provider and self.registry:
+            # Combine registry usage with any direct usage
+            registry_usage = self.registry.get_total_usage()
+            return {
+                "calls": self.usage["calls"] + registry_usage.get("calls", 0),
+                "prompt_tokens": self.usage["prompt_tokens"] + registry_usage.get("prompt_tokens", 0),
+                "completion_tokens": self.usage["completion_tokens"] + registry_usage.get("completion_tokens", 0),
+                "total_tokens": self.usage["total_tokens"] + registry_usage.get("total_tokens", 0),
+            }
         return dict(self.usage)
+    
+    def get_usage_by_provider(self) -> Dict:
+        """Get per-provider usage statistics (multi-provider mode only)."""
+        if self.use_multi_provider and self.registry:
+            return self.registry.get_all_usage()
+        return {"legacy": self.usage}
+    
+    def get_provider_health(self) -> Dict:
+        """Get health status of all providers (multi-provider mode only)."""
+        if self.use_multi_provider and self.registry:
+            return self.registry.get_health_status()
+        return {"legacy": "healthy" if (self.use_openrouter or self.use_openai) else "unavailable"}
+    
+    def _call_multi_provider(self, messages: List[Dict], task_type: str, temperature: float = 0.0, model: str = None) -> Tuple[Optional[str], Optional[Dict]]:
+        """Route call through multi-provider registry with automatic rerouting."""
+        if not self.registry:
+            raise Exception("Multi-provider registry not initialized")
+        return self.registry.call_with_reroute(
+            task_type=task_type,
+            messages=messages,
+            temperature=temperature,
+            model=model,
+        )
 
     def _propose_subtopics_via_openrouter(self, payload_messages, model=None, temperature=0.0):
         # reuse _call_openrouter to keep base handling
@@ -127,7 +185,11 @@ class LLM:
         prompt += "\n\nReturn a JSON array of strings, e.g. [\"subtopic 1\", \"subtopic 2\"] and nothing else."
         messages = [{"role": "user", "content": prompt}]
         try:
-            content, usage = self._propose_subtopics_via_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
+            # Try multi-provider mode first
+            if self.use_multi_provider:
+                content, usage = self._call_multi_provider(messages, task_type="subtopic", temperature=0.0)
+            else:
+                content, usage = self._propose_subtopics_via_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
             # log prompt/response for provenance when datastore available
             try:
                 from .datastore import Datastore
@@ -189,7 +251,11 @@ class LLM:
             prompt += f"- {s.get('title','')}: {(s.get('summary') or '')[:400]}\n"
         messages = [{"role": "user", "content": prompt}]
         try:
-            content, usage = self._propose_subtopics_via_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
+            # Try multi-provider mode first
+            if self.use_multi_provider:
+                content, usage = self._call_multi_provider(messages, task_type="validation", temperature=0.0)
+            else:
+                content, usage = self._propose_subtopics_via_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
             if not content:
                 return False
             import json, re
@@ -230,7 +296,11 @@ class LLM:
             prompt += f"- {s.get('title','')}: {(s.get('summary') or '')[:800]}\n"
         messages = [{"role": "user", "content": prompt}]
         try:
-            content, usage = self._call_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
+            # Try multi-provider mode first
+            if self.use_multi_provider:
+                content, usage = self._call_multi_provider(messages, task_type="recommendations", temperature=0.0)
+            else:
+                content, usage = self._call_openrouter(messages, model=getattr(self, 'openrouter_model', None), temperature=0.0)
             # persist prompt/response
             try:
                 from .datastore import Datastore
@@ -486,10 +556,21 @@ class LLM:
         _cache_misses += 1
         
         context_hint = f" Focus on information relevant to: {context}." if context else ""
+        messages = [{"role": "user", "content": f"Summarize the following text in {max_sentences} concise sentences.{context_hint} Ignore any content unrelated to the main topic.\n\n{text}"}]
         result = None
-        if self.use_openrouter:
+        
+        # Try multi-provider mode first
+        if self.use_multi_provider:
             try:
-                messages = [{"role": "user", "content": f"Summarize the following text in {max_sentences} concise sentences.{context_hint} Ignore any content unrelated to the main topic.\n\n{text}"}]
+                content, _ = self._call_multi_provider(messages, task_type="summarization", temperature=0.0)
+                if content:
+                    result = content.strip()
+            except Exception as e:
+                log.error(f"Multi-provider error: {e}")
+        
+        # Fall back to legacy single-provider mode
+        if result is None and self.use_openrouter:
+            try:
                 content, _ = self._call_openrouter(messages, temperature=0.0)
                 if content:
                     result = content.strip()
@@ -499,7 +580,7 @@ class LLM:
             try:
                 resp = self.openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": f"Summarize the following text in {max_sentences} concise sentences.{context_hint} Ignore any content unrelated to the main topic.\n\n{text}"}],
+                    messages=messages,
                     temperature=0.0,
                 )
                 self._record_usage(resp.get("usage"))
@@ -530,9 +611,21 @@ class LLM:
             target_words = int(os.environ.get("SUMMARY_WORD_COUNT", "200"))
         except ValueError:
             target_words = 200
+        
+        messages = [{"role": "user", "content": f"Write a ~{target_words}-word summary of the following text:\n\n" + text}]
+        
+        # Try multi-provider mode first
+        if self.use_multi_provider:
+            try:
+                content, _ = self._call_multi_provider(messages, task_type="report", temperature=0.0)
+                if content:
+                    return content.strip()
+            except Exception as e:
+                log.error(f"Multi-provider error: {e}")
+        
+        # Fall back to legacy single-provider mode
         if self.use_openrouter:
             try:
-                messages = [{"role": "user", "content": f"Write a ~{target_words}-word summary of the following text:\n\n" + text}]
                 content, _ = self._call_openrouter(messages, temperature=0.0)
                 if content:
                     return content.strip()
@@ -542,7 +635,7 @@ class LLM:
             try:
                 resp = self.openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": f"Write a ~{target_words}-word summary of the following text:\n\n" + text}],
+                    messages=messages,
                     temperature=0.0,
                 )
                 self._record_usage(resp.get("usage"))

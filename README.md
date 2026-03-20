@@ -291,6 +291,43 @@ MAX_CONCURRENT_TASKS=4
 SOURCE_COUNT=25
 ```
 
+### Multi-Provider Mode (Advanced)
+
+For higher throughput and automatic failover, you can configure multiple LLM providers with per-provider task assignments:
+
+```bash
+# Multiple OpenRouter keys (load balanced)
+OPENROUTER_API_KEYS=sk-or-v1-key1,sk-or-v1-key2,sk-or-v1-key3
+OPENROUTER_MODELS=arcee-ai/trinity-large-preview:free
+OPENROUTER_TASKS=all  # Enable for all task types
+
+# Groq (fast inference, disabled in this example)
+GROQ_API_KEYS=gsk_key1,gsk_key2
+GROQ_MODELS=llama-3.3-70b-versatile
+GROQ_TASKS=none  # Keys stored but not used
+
+# Google AI Studio (specific tasks only)
+GOOGLE_AI_KEYS=AIza...key1
+GOOGLE_AI_MODELS=gemini-2.0-flash-exp
+GOOGLE_AI_TASKS=summarization,validation  # Only these tasks
+
+# Ollama (local model for high-quality report generation)
+OLLAMA_BASE_URLS=http://localhost:11434
+OLLAMA_MODELS=llama3.1:70b
+OLLAMA_TASKS=report  # Only final report synthesis
+
+# Provider fallback order
+LLM_FALLBACK_CHAIN=openrouter,groq,google_ai,ollama
+```
+
+**Task Types**: `all`, `none`, `summarization`, `subtopic`, `validation`, `report`, `recommendations`, `research`
+
+**Features**:
+- **Load balancing**: Calls distributed across all healthy providers for a task type
+- **Automatic failover**: Rate limits trigger instant rerouting to other providers
+- **Per-provider tasks**: Assign different providers to different task types
+- **Circuit breaker**: Failed providers temporarily disabled to prevent cascading failures
+
 ---
 
 ## Usage
