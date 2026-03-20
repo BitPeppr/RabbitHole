@@ -1016,12 +1016,6 @@ Subclass `Agent` in `agent.py` and override `run()` or `_derive_subtopics()`.
 
 ---
 
-## License
-
-(Add your license here)
-
----
-
 ## Acknowledgments
 
 Built with:
