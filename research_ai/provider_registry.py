@@ -319,8 +319,8 @@ def init_registry_from_env() -> ProviderRegistry:
             continue
         
         if not config.requires_api_key and not keys:
-            # Ollama uses base URLs, default to localhost
-            keys = ["http://localhost:11434"]
+            # Ollama/local providers: only register if explicitly configured
+            continue
         
         # Get model
         model = os.environ.get(config.env_model_var, "")

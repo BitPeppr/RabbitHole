@@ -22,6 +22,41 @@ from .logger import log
 BING_MAX_RETRIES = 3
 BING_RETRY_DELAY_SEC = 2
 
+# Rate limiting for web searches to prevent overwhelming external services
+_web_search_lock = None
+_last_web_search_time = 0
+
+def _get_web_search_min_interval():
+    """Get minimum interval between web searches from env (default 0.5s)."""
+    import os
+    try:
+        return float(os.environ.get("WEB_SEARCH_DELAY_SEC", "0.5"))
+    except ValueError:
+        return 0.5
+
+def _get_web_search_lock():
+    """Get or create the global web search lock."""
+    global _web_search_lock
+    if _web_search_lock is None:
+        import threading
+        _web_search_lock = threading.Lock()
+    return _web_search_lock
+
+def _rate_limit_web_search():
+    """Ensure minimum interval between web searches to avoid rate limits."""
+    global _last_web_search_time
+    import time as time_module
+    min_interval = _get_web_search_min_interval()
+    if min_interval <= 0:
+        return  # Rate limiting disabled
+    lock = _get_web_search_lock()
+    with lock:
+        now = time_module.time()
+        elapsed = now - _last_web_search_time
+        if elapsed < min_interval:
+            time_module.sleep(min_interval - elapsed)
+        _last_web_search_time = time_module.time()
+
 # Global persistent session with connection pooling
 _global_session = None
 
@@ -107,6 +142,16 @@ class WebSearchConnector:
                         if href and title:
                             real_url = _extract_real_url(href)
                             links.append((title, real_url))
+                
+                # Log if Bing returned no results (likely blocked/captcha)
+                if not links:
+                    # Check for captcha/block indicators
+                    page_text = resp.text.lower()
+                    if 'captcha' in page_text or 'unusual traffic' in page_text or 'blocked' in page_text:
+                        log.warning(f"[web_search] Bing appears blocked/captcha for query: {query[:50]}...")
+                    else:
+                        log.warning(f"[web_search] Bing returned 0 results for query: {query[:50]}...")
+                
                 # Success - return the links
                 return links
             except Exception as e:
@@ -121,6 +166,9 @@ class WebSearchConnector:
         return []
 
     def _sync_fetch(self, topic: str, n: int = 3):
+        # Rate limit to avoid overwhelming external services
+        _rate_limit_web_search()
+        
         results = []
         seen_urls = set()
         topic_terms = self._terms(topic)
@@ -204,10 +252,11 @@ class WebSearchConnector:
                         if score >= 1:
                             results.append({"title": title or url, "url": url, "text": text})
                             seen_urls.add(url)
-                except Exception:
+                except Exception as e:
+                    log.warning(f"[web_search] Failed to fetch {url}: {e}")
                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[web_search] Bing search failed for '{topic}': {e}")
         # If we didn't reach n, fallback to Wikipedia but limit wikipedia dominance
         if len(results) < n:
             try:
@@ -233,8 +282,8 @@ class WebSearchConnector:
                         if score >= 1:
                             results.append({"title": title, "url": page_url, "text": text})
                             seen_urls.add(page_url)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error(f"[web_search] Wikipedia fallback failed for '{topic}': {e}")
         # Fallback 2: arXiv abstracts for research-heavy topics
         if len(results) < n:
             try:
@@ -259,8 +308,15 @@ class WebSearchConnector:
                                 seen_urls.add(link)
                         if len(results) >= n:
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                log.error(f"[web_search] arXiv fallback failed for '{topic}': {e}")
+        
+        # Log final result count
+        if not results:
+            log.warning(f"[web_search] No sources found for '{topic}' (Bing + Wikipedia + arXiv all failed)")
+        else:
+            log.progress(f"[web_search] Found {len(results)} sources for '{topic[:50]}...'")
+        
         # Rank and return up to n results
         scored = []
         for r in results:

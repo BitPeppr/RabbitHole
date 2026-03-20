@@ -407,6 +407,9 @@ class GroqProvider(ProviderBase):
         }
         
         try:
+            if self.log_requests:
+                log.progress(f"[{self.provider_id}] request model={model}")
+            
             resp = requests.post(url, json=payload, headers=headers, timeout=60)
             
             # Check for rate limit
@@ -429,11 +432,17 @@ class GroqProvider(ProviderBase):
             usage = data.get("usage")
             self.record_usage(usage)
             
+            if self.log_requests:
+                tokens = usage.get("total_tokens", 0) if usage else 0
+                log.progress(f"[{self.provider_id}] response ok tokens={tokens}")
+            
             return content, usage
             
         except RateLimitError:
+            log.warning(f"[{self.provider_id}] rate limit hit")
             raise
         except RequestException as e:
+            log.error(f"[{self.provider_id}] request failed: {e}")
             retry_after = self._detect_rate_limit(error=e)
             if retry_after:
                 raise RateLimitError(
@@ -441,6 +450,9 @@ class GroqProvider(ProviderBase):
                     retry_after=retry_after,
                     provider_id=self.provider_id
                 )
+            raise
+        except Exception as e:
+            log.error(f"[{self.provider_id}] error: {e}")
             raise
 
 
@@ -499,6 +511,9 @@ class GoogleAIProvider(ProviderBase):
         }
         
         try:
+            if self.log_requests:
+                log.progress(f"[{self.provider_id}] request model={model}")
+            
             resp = requests.post(
                 url, 
                 json=payload, 
@@ -536,11 +551,17 @@ class GoogleAIProvider(ProviderBase):
                 }
             self.record_usage(usage)
             
+            if self.log_requests:
+                tokens = usage.get("total_tokens", 0) if usage else 0
+                log.progress(f"[{self.provider_id}] response ok tokens={tokens}")
+            
             return content, usage
             
         except RateLimitError:
+            log.warning(f"[{self.provider_id}] rate limit hit")
             raise
         except RequestException as e:
+            log.error(f"[{self.provider_id}] request failed: {e}")
             retry_after = self._detect_rate_limit(error=e)
             if retry_after:
                 raise RateLimitError(
@@ -548,6 +569,9 @@ class GoogleAIProvider(ProviderBase):
                     retry_after=retry_after,
                     provider_id=self.provider_id
                 )
+            raise
+        except Exception as e:
+            log.error(f"[{self.provider_id}] error: {e}")
             raise
 
 
@@ -598,6 +622,9 @@ class OllamaProvider(ProviderBase):
         }
         
         try:
+            if self.log_requests:
+                log.progress(f"[{self.provider_id}] request model={model}")
+            
             resp = requests.post(url, json=payload, headers=headers, timeout=300)  # Longer timeout for local
             
             # Check for rate limit (Ollama can return 503 if busy)
@@ -619,17 +646,26 @@ class OllamaProvider(ProviderBase):
             usage = data.get("usage")
             self.record_usage(usage)
             
+            if self.log_requests:
+                tokens = usage.get("total_tokens", 0) if usage else 0
+                log.progress(f"[{self.provider_id}] response ok tokens={tokens}")
+            
             return content, usage
             
         except RateLimitError:
+            log.warning(f"[{self.provider_id}] busy/rate limited")
             raise
         except RequestException as e:
+            log.error(f"[{self.provider_id}] request failed: {e}")
             if "503" in str(e) or "busy" in str(e).lower():
                 raise RateLimitError(
                     f"Ollama busy on {self.provider_id}: {e}",
                     retry_after=10,
                     provider_id=self.provider_id
                 )
+            raise
+        except Exception as e:
+            log.error(f"[{self.provider_id}] error: {e}")
             raise
 
 
@@ -683,6 +719,9 @@ class OpenAIProvider(ProviderBase):
         }
         
         try:
+            if self.log_requests:
+                log.progress(f"[{self.provider_id}] request model={model}")
+            
             resp = requests.post(url, json=payload, headers=headers, timeout=60)
             
             # Check for rate limit
@@ -705,11 +744,17 @@ class OpenAIProvider(ProviderBase):
             usage = data.get("usage")
             self.record_usage(usage)
             
+            if self.log_requests:
+                tokens = usage.get("total_tokens", 0) if usage else 0
+                log.progress(f"[{self.provider_id}] response ok tokens={tokens}")
+            
             return content, usage
             
         except RateLimitError:
+            log.warning(f"[{self.provider_id}] rate limit hit")
             raise
         except RequestException as e:
+            log.error(f"[{self.provider_id}] request failed: {e}")
             retry_after = self._detect_rate_limit(error=e)
             if retry_after:
                 raise RateLimitError(
@@ -717,6 +762,9 @@ class OpenAIProvider(ProviderBase):
                     retry_after=retry_after,
                     provider_id=self.provider_id
                 )
+            raise
+        except Exception as e:
+            log.error(f"[{self.provider_id}] error: {e}")
             raise
 
 
