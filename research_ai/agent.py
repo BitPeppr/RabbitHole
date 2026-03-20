@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import re
 import os
@@ -42,7 +43,10 @@ class Agent:
                     ),
                 }
             )
-        for doc in docs:
+        
+        # OPTIMIZATION: Process all documents in parallel instead of sequentially
+        # This runs all summarizations concurrently (respecting global semaphore limits)
+        async def process_doc(doc):
             text = doc.get("text", "")
             # include parent/root context in summarization prompt when available
             combined_text = (self.parent_context or "") + "\n\n" + text if self.parent_context else text
@@ -62,7 +66,13 @@ class Agent:
                     orchestrator.datastore.save_embedding(emb_id, orchestrator.job_id, doc_id, emb, metadata={"title": doc.get("title"), "path": path})
             except Exception:
                 pass
-            summaries.append({"title": doc.get("title"), "url": doc.get("url"), "summary": summary})
+            return {"title": doc.get("title"), "url": doc.get("url"), "summary": summary}
+        
+        if docs:
+            # Run all doc processing in parallel
+            summaries = await asyncio.gather(*[process_doc(doc) for doc in docs])
+            summaries = list(summaries)  # Convert from tuple
+        
         spawned = 0
         result = {
             "agent_id": self.id,
@@ -111,18 +121,30 @@ class Agent:
                     ) or []
                 except Exception:
                     proposed = []
-                # validate proposals
-                for st in proposed:
-                    if len(valid_subtopics) >= self.max_children:
-                        break
-                    if self._is_on_topic(st, self.root_topic):
-                        # If an LLM provider is available, ask it to validate the candidate conservatively.
-                        llm_ok = True
+                
+                # OPTIMIZATION: Run validations in parallel instead of sequentially
+                # Filter by heuristic first (fast), then validate remaining in parallel
+                # Only validate up to max_children * 1.5 to avoid wasting LLM calls
+                heuristic_passed = [st for st in proposed if self._is_on_topic(st, self.root_topic)]
+                heuristic_passed = heuristic_passed[:int(self.max_children * 1.5)]  # Don't validate more than needed
+                
+                if heuristic_passed:
+                    # Create validation tasks for all heuristic-passed candidates
+                    async def validate_one(st):
                         try:
                             if getattr(orchestrator.llm, 'use_openrouter', False) or getattr(orchestrator.llm, 'use_openai', False):
-                                llm_ok = await orchestrator.llm.validate_candidate_async(st, self.root_topic, summaries)
+                                return st, await orchestrator.llm.validate_candidate_async(st, self.root_topic, summaries)
+                            return st, True
                         except Exception:
-                            llm_ok = False
+                            return st, False
+                    
+                    # Run all validations concurrently
+                    validation_results = await asyncio.gather(*[validate_one(st) for st in heuristic_passed])
+                    
+                    # Process results and spawn children
+                    for st, llm_ok in validation_results:
+                        if len(valid_subtopics) >= self.max_children:
+                            break
                         if not llm_ok:
                             continue
                         # build a richer parent_context for children: include root topic and short parent summaries
@@ -131,6 +153,7 @@ class Agent:
                         child = Agent(topic=st, depth=self.depth + 1, max_depth=self.max_depth, max_children=self.max_children, parent_id=self.id, parent_context=child_parent_context)
                         await orchestrator.enqueue(child)
                         valid_subtopics.append(st)
+                
                 if len(valid_subtopics) >= self.max_children:
                     break
                 # if none valid and we can retry, continue to ask proposer again

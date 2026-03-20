@@ -12,6 +12,8 @@ import xml.etree.ElementTree as ET
 import re
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from .executor_limiter import get_executor, get_semaphore
 from .logger import log
@@ -19,6 +21,35 @@ from .logger import log
 # Retry configuration for web search
 BING_MAX_RETRIES = 3
 BING_RETRY_DELAY_SEC = 2
+
+# Global persistent session with connection pooling
+_global_session = None
+
+def _get_session() -> requests.Session:
+    """Get or create a global requests session with connection pooling."""
+    global _global_session
+    if _global_session is None:
+        _global_session = requests.Session()
+        # Configure connection pooling and retries
+        retry_strategy = Retry(
+            total=2,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(
+            pool_connections=20,  # Connection pool size
+            pool_maxsize=20,      # Max connections per host
+            max_retries=retry_strategy
+        )
+        _global_session.mount("http://", adapter)
+        _global_session.mount("https://", adapter)
+        _global_session.headers.update({"User-Agent": "Mozilla/5.0 (ResearchAI/0.1)"})
+    return _global_session
+
+
+# Global URL content cache: maps URL -> (title, text) to avoid re-fetching same pages
+_url_cache = {}
+_url_cache_hits = 0
 
 
 def _extract_real_url(bing_url: str) -> str:
@@ -94,8 +125,8 @@ class WebSearchConnector:
         seen_urls = set()
         topic_terms = self._terms(topic)
         try:
-            s = requests.Session()
-            headers = {"User-Agent": "Mozilla/5.0 (ResearchAI/0.1)"}
+            # OPTIMIZATION: Use global session with connection pooling
+            s = _get_session()
             links = []
             # Generate contextual query variants that preserve the full meaning
             # Avoid single-word matches by keeping topic phrases intact
@@ -108,7 +139,7 @@ class WebSearchConnector:
             ]
             # Collect many candidate links across query variants (with retry)
             for q in query_variants:
-                new_links = self._bing_search_with_retry(s, q, headers)
+                new_links = self._bing_search_with_retry(s, q, s.headers)
                 links.extend(new_links)
                 # stop collecting once we have a reasonable pool
                 if len(links) >= max(20, n * 6):
@@ -146,16 +177,27 @@ class WebSearchConnector:
             # Limit candidate list
             ordered = ordered[: max(n * 8, 40)]
             # Fetch pages in order until we have n good results
+            global _url_cache, _url_cache_hits
             for title, url in ordered:
                 if len(results) >= n:
                     break
                 try:
-                    r = s.get(url, timeout=10, headers=headers)
-                    psoup = BeautifulSoup(r.text, "html.parser")
-                    paragraphs = psoup.find_all("p")
-                    text = "\n\n".join(p.get_text(strip=True) for p in paragraphs[:8])
-                    if not text:
-                        text = r.text[:5000]
+                    # OPTIMIZATION: Check URL cache first
+                    if url in _url_cache:
+                        cached_title, text = _url_cache[url]
+                        _url_cache_hits += 1
+                        if _url_cache_hits % 20 == 0:
+                            log.progress(f"[url_cache] hits={_url_cache_hits}")
+                    else:
+                        r = s.get(url, timeout=10)
+                        psoup = BeautifulSoup(r.text, "html.parser")
+                        paragraphs = psoup.find_all("p")
+                        text = "\n\n".join(p.get_text(strip=True) for p in paragraphs[:8])
+                        if not text:
+                            text = r.text[:5000]
+                        # Cache the fetched content
+                        _url_cache[url] = (title, text)
+                    
                     if url and url not in seen_urls and text:
                         score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
                         # accept slightly lower score to increase diversity but keep relevance
@@ -171,7 +213,7 @@ class WebSearchConnector:
             try:
                 query = urllib.parse.quote_plus(topic)
                 w_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&srlimit={max(3, (n-len(results))*3)}"
-                w_resp = requests.get(w_url, timeout=10, headers={"User-Agent": "ResearchAI/0.1"})
+                w_resp = s.get(w_url, timeout=10)
                 data = w_resp.json()
                 for item in data.get("query", {}).get("search", []):
                     if len(results) >= n:
@@ -180,7 +222,7 @@ class WebSearchConnector:
                     if not title:
                         continue
                     p_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
-                    p_resp = requests.get(p_url, timeout=10, headers={"User-Agent": "ResearchAI/0.1"})
+                    p_resp = s.get(p_url, timeout=10)
                     p_json = p_resp.json() if p_resp.status_code == 200 else {}
                     text = (p_json.get("extract") or "").strip()
                     page_url = p_json.get("content_urls", {}).get("desktop", {}).get("page", "")
@@ -198,7 +240,7 @@ class WebSearchConnector:
             try:
                 q = urllib.parse.quote_plus(topic)
                 a_url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max(3, (n-len(results))*2)}"
-                a_resp = requests.get(a_url, timeout=10, headers={"User-Agent": "ResearchAI/0.1"})
+                a_resp = s.get(a_url, timeout=10)
                 if a_resp.status_code == 200:
                     ns = {"atom": "http://www.w3.org/2005/Atom"}
                     root = ET.fromstring(a_resp.text)

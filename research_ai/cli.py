@@ -6,14 +6,71 @@ Only a single positional topic argument is accepted; all other settings are load
 
 import asyncio
 import os
+import shutil
 import signal
 import sys
+import tempfile
 
 from .datastore import Datastore
 from .llm import LLM
 from .web_search import WebSearchConnector
 from .orchestrator import Orchestrator
 from .logger import log
+
+
+def _get_runtime_dir() -> str:
+    """Get the runtime directory for transient files.
+    
+    Uses RUNTIME_DIR env var if set, otherwise uses system temp directory.
+    For packaging (pipx/homebrew), this ensures no files are written to the project.
+    """
+    if os.environ.get("RUNTIME_DIR"):
+        return os.environ["RUNTIME_DIR"]
+    # Use system temp directory for clean packaging
+    base_tmp = os.environ.get("TMPDIR", tempfile.gettempdir())
+    runtime_dir = os.path.join(base_tmp, "researchai")
+    os.makedirs(runtime_dir, exist_ok=True)
+    return runtime_dir
+
+
+def _cleanup_runtime(runtime_dir: str, keep_report: bool = True):
+    """Clean up all runtime artifacts (db, cache, artifacts) after job completion.
+    
+    Args:
+        runtime_dir: The runtime directory to clean
+        keep_report: If True, don't delete anything (report is kept at OUTPUT_PATH)
+    """
+    # Clear in-memory caches
+    try:
+        from .llm import _summary_cache
+        _summary_cache.clear()
+    except Exception:
+        pass
+    try:
+        from .web_search import _url_cache
+        _url_cache.clear()
+    except Exception:
+        pass
+    
+    # Delete runtime directory contents (db, artifacts, logs)
+    if runtime_dir and os.path.isdir(runtime_dir):
+        try:
+            # Only delete if it's in a temp location (safety check)
+            base_tmp = os.environ.get("TMPDIR", tempfile.gettempdir())
+            if runtime_dir.startswith(base_tmp) or runtime_dir.startswith("/tmp"):
+                shutil.rmtree(runtime_dir, ignore_errors=True)
+                log.progress("[cleanup] Runtime directory cleared")
+            else:
+                # For custom RUNTIME_DIR, just clear contents but keep the dir
+                for item in os.listdir(runtime_dir):
+                    item_path = os.path.join(runtime_dir, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        os.remove(item_path)
+                log.progress("[cleanup] Runtime contents cleared")
+        except Exception as e:
+            log.warning(f"Cleanup warning: {e}")
 
 
 def _handle_interrupt(signum, frame):
@@ -54,8 +111,15 @@ def _load_dotenv(path: str = ".env"):
 
 async def main_async(topic: str):
     _load_dotenv()
-    root = os.path.abspath(os.getcwd())
-    db_path = os.environ.get("DB_PATH", os.path.join(root, "research_ai", "state.db"))
+    
+    # Set up runtime directory (uses /tmp/researchai by default for clean packaging)
+    runtime_dir = _get_runtime_dir()
+    os.environ["RUNTIME_DIR"] = runtime_dir  # Propagate to datastore
+    
+    # Check if auto-cleanup is enabled (default: True)
+    auto_cleanup = os.environ.get("AUTO_CLEANUP", "1").lower() not in ("0", "false", "no")
+    
+    db_path = os.environ.get("DB_PATH", "state.db")  # Relative path goes into runtime_dir
     ds = Datastore(db_path)
     ds.init()
 
@@ -63,6 +127,7 @@ async def main_async(topic: str):
     from .executor_limiter import get_max_tasks
     max_tasks = get_max_tasks()
     log.config(f"MAX_CONCURRENT_TASKS={max_tasks} (controls system-wide parallelism)")
+    log.config(f"RUNTIME_DIR={runtime_dir}")
 
     # Force OpenRouter provider
     llm = LLM(provider="openrouter")
@@ -88,10 +153,28 @@ async def main_async(topic: str):
     log.success(f"Report written to {out}")
     if getattr(orch, "job_id", None):
         print("Job ID:", orch.job_id)
+    
+    # Auto-cleanup runtime artifacts after successful completion
+    if auto_cleanup:
+        # Close database connection first
+        try:
+            if ds.conn:
+                ds.conn.close()
+        except Exception:
+            pass
+        _cleanup_runtime(runtime_dir)
+        log.success("Runtime cleanup complete (db, cache, artifacts cleared)")
 
 
 def main():
-    topic = sys.argv[1] if len(sys.argv) > 1 else "Sample topic: impacts of AI on labor"
+    # Simple CLI: research_ai "topic" [--no-cleanup]
+    args = sys.argv[1:]
+    no_cleanup = "--no-cleanup" in args
+    if no_cleanup:
+        args.remove("--no-cleanup")
+        os.environ["AUTO_CLEANUP"] = "0"
+    
+    topic = args[0] if args else "Sample topic: impacts of AI on labor"
     asyncio.run(main_async(topic))
 
 

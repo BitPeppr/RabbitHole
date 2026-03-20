@@ -10,7 +10,8 @@ import re
 import json
 import asyncio
 import time
-from typing import Optional, Tuple
+import hashlib
+from typing import Optional, Tuple, Dict
 from concurrent.futures import ThreadPoolExecutor
 
 from .logger import log
@@ -24,6 +25,37 @@ STOPWORDS = {
 LLM_MAX_RETRIES = 3
 LLM_RETRY_DELAY_SEC = 5
 LLM_BACKUP_DELAY_SEC = 60
+
+# Global failure tracking: after this many failures across all tasks/agents,
+# apply a cooldown before each subsequent LLM call attempt
+import threading
+LLM_GLOBAL_FAILURE_THRESHOLD = 3
+LLM_GLOBAL_COOLDOWN_SEC = 60
+_global_failure_count = 0
+_global_failure_lock = threading.Lock()
+
+def _increment_global_failures():
+    """Increment the global failure counter (thread-safe)."""
+    global _global_failure_count
+    with _global_failure_lock:
+        _global_failure_count += 1
+        return _global_failure_count
+
+def _reset_global_failures():
+    """Reset the global failure counter after a successful call (thread-safe)."""
+    global _global_failure_count
+    with _global_failure_lock:
+        _global_failure_count = 0
+
+def _should_apply_cooldown():
+    """Check if cooldown should be applied based on global failure count."""
+    with _global_failure_lock:
+        return _global_failure_count >= LLM_GLOBAL_FAILURE_THRESHOLD
+
+# Global summary cache: maps content hash -> summary (persists across agents)
+_summary_cache: Dict[str, str] = {}
+_cache_hits = 0
+_cache_misses = 0
 
 
 class LLM:
@@ -283,21 +315,39 @@ class LLM:
         2. If all fail and backup model defined, try backup model once
         3. Wait 60 seconds, try backup model again
         4. If still failing, raise exception
+        
+        Global failure tracking:
+        - After 3+ failures across any tasks/agents, apply 60-second cooldown before each retry
+        - Successful calls reset the global failure counter
         """
         main_model = model or getattr(self, "openrouter_model", "arcee-ai/trinity-large-preview:free")
         backup_model = getattr(self, "backup_model", None)
         
         last_error = None
         
+        def _apply_cooldown_if_needed():
+            """Apply global cooldown if failure threshold exceeded."""
+            if _should_apply_cooldown():
+                log.warning(f"Global failure threshold ({LLM_GLOBAL_FAILURE_THRESHOLD}) exceeded, applying {LLM_GLOBAL_COOLDOWN_SEC}s cooldown before retry")
+                time.sleep(LLM_GLOBAL_COOLDOWN_SEC)
+        
         # Phase 1: Try main model up to 3 times
         for attempt in range(LLM_MAX_RETRIES):
+            # Apply global cooldown before each attempt (if threshold exceeded)
+            if attempt > 0:
+                _apply_cooldown_if_needed()
+            
             try:
-                return self._call_openrouter_single(messages, model=main_model, temperature=temperature)
+                result = self._call_openrouter_single(messages, model=main_model, temperature=temperature)
+                _reset_global_failures()  # Success resets global counter
+                return result
             except Exception as e:
+                _increment_global_failures()
                 last_error = e
                 if attempt < LLM_MAX_RETRIES - 1:
-                    log.warning(f"LLM call failed (attempt {attempt + 1}/{LLM_MAX_RETRIES}), retrying in {LLM_RETRY_DELAY_SEC}s: {e}")
-                    time.sleep(LLM_RETRY_DELAY_SEC)
+                    delay = LLM_RETRY_DELAY_SEC
+                    log.warning(f"LLM call failed (attempt {attempt + 1}/{LLM_MAX_RETRIES}), retrying in {delay}s: {e}")
+                    time.sleep(delay)
                 else:
                     log.error(f"LLM call failed after {LLM_MAX_RETRIES} attempts with main model: {e}")
         
@@ -306,16 +356,24 @@ class LLM:
             log.warning(f"Switching to backup model: {backup_model}")
             
             # First attempt with backup model
+            _apply_cooldown_if_needed()
             try:
-                return self._call_openrouter_single(messages, model=backup_model, temperature=temperature)
+                result = self._call_openrouter_single(messages, model=backup_model, temperature=temperature)
+                _reset_global_failures()  # Success resets global counter
+                return result
             except Exception as e:
+                _increment_global_failures()
                 log.warning(f"Backup model failed (attempt 1/2), waiting {LLM_BACKUP_DELAY_SEC}s: {e}")
                 time.sleep(LLM_BACKUP_DELAY_SEC)
             
             # Second attempt with backup model
+            _apply_cooldown_if_needed()
             try:
-                return self._call_openrouter_single(messages, model=backup_model, temperature=temperature)
+                result = self._call_openrouter_single(messages, model=backup_model, temperature=temperature)
+                _reset_global_failures()  # Success resets global counter
+                return result
             except Exception as e:
+                _increment_global_failures()
                 log.error(f"Backup model failed (attempt 2/2): {e}")
                 last_error = e
         
@@ -414,18 +472,30 @@ class LLM:
 
     def summarize(self, text: str, max_sentences: int = 5, context: str = None) -> str:
         """Synchronous summarization (blocks). Use summarize_async() for concurrent control."""
+        global _summary_cache, _cache_hits, _cache_misses
         if not text:
             return ""
+        
+        # Check cache first (content-hash based)
+        cache_key = hashlib.sha256(f"{text[:8000]}|{max_sentences}|{context or ''}".encode()).hexdigest()
+        if cache_key in _summary_cache:
+            _cache_hits += 1
+            if _cache_hits % 50 == 0:
+                log.progress(f"[cache] hits={_cache_hits} misses={_cache_misses} ratio={_cache_hits/max(1,_cache_hits+_cache_misses):.1%}")
+            return _summary_cache[cache_key]
+        _cache_misses += 1
+        
         context_hint = f" Focus on information relevant to: {context}." if context else ""
+        result = None
         if self.use_openrouter:
             try:
                 messages = [{"role": "user", "content": f"Summarize the following text in {max_sentences} concise sentences.{context_hint} Ignore any content unrelated to the main topic.\n\n{text}"}]
                 content, _ = self._call_openrouter(messages, temperature=0.0)
                 if content:
-                    return content.strip()
+                    result = content.strip()
             except Exception as e:
                 log.error(f"OpenRouter error: {e}")
-        if self.use_openai:
+        if result is None and self.use_openai:
             try:
                 resp = self.openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
@@ -433,10 +503,15 @@ class LLM:
                     temperature=0.0,
                 )
                 self._record_usage(resp.get("usage"))
-                return resp["choices"][0]["message"]["content"].strip()
+                result = resp["choices"][0]["message"]["content"].strip()
             except Exception as e:
                 log.error(f"OpenAI error: {e}")
-        return self._extractive_summary(text, max_sentences)
+        if result is None:
+            result = self._extractive_summary(text, max_sentences)
+        
+        # Cache the result
+        _summary_cache[cache_key] = result
+        return result
     
     async def summarize_async(self, text: str, max_sentences: int = 5) -> str:
         """Async summarization with global concurrency control via semaphore and executor."""

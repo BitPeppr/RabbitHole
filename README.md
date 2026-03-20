@@ -49,9 +49,14 @@ MAX_CONCURRENT_TASKS=1   # 1=sequential, 4=parallel
 
 ```bash
 python -m research_ai.cli "Your research topic here"
+
+# Keep runtime files for debugging (db, cache, artifacts):
+python -m research_ai.cli "Your topic" --no-cleanup
 ```
 
 Output saved to: `research_report.md`
+
+Runtime files (db, cache) are stored in `$TMPDIR/researchai` and automatically cleaned up after each run. This keeps the project directory clean for packaging (pipx/homebrew).
 
 ---
 
@@ -113,6 +118,13 @@ Each agent:
 - Increase `MAX_CONCURRENT_TASKS` for faster results
 - Trade memory for speed when you have RAM
 - Up to 8× faster with more concurrent tasks
+
+### 🧹 Clean Runtime
+
+- Runtime files (db, cache) stored in system temp directory (`$TMPDIR/researchai`)
+- Automatic cleanup after each run (configurable via `AUTO_CLEANUP`)
+- Project directory stays clean — ready for pipx/homebrew packaging
+- Content-hash caching for summaries avoids redundant LLM calls
 
 ### 🌐 Real Web Search
 
