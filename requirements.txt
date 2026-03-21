@@ -8,3 +8,11 @@ beautifulsoup4>=4.11.0
 # Optional: Playwright for JS-rendered pages (Bing anti-bot bypass)
 # Install with: pip install playwright && playwright install chromium
 # playwright>=1.40.0
+
+# Optional: Alternative search provider SDKs
+# These are only needed if you use the corresponding SEARCH_PROVIDER
+# Tavily: pip install tavily-python
+# tavily-python>=0.5.0
+# Exa: pip install exa-py
+# exa-py>=1.0.0
+# Note: Brave and SerpAPI use direct REST API calls (no SDK needed)

@@ -135,8 +135,8 @@ Each agent:
 
 ### 🌐 Real Web Search
 
-- Uses OpenRouter's web plugin (recommended)
-- Fallback to direct HTTP search (Bing/Wikipedia/arXiv)
+- **Multiple search backends**: Brave, SerpAPI, Tavily, Exa, Bing, Wikipedia, arXiv
+- **Configurable fallback chain**: Define provider order (e.g., `brave,serpapi,bing,wikipedia`)
 - Fetches actual online sources, not simulated data
 
 ### 📊 Progress Tracking
@@ -327,6 +327,57 @@ LLM_FALLBACK_CHAIN=openrouter,groq,google_ai,ollama
 - **Automatic failover**: Rate limits trigger instant rerouting to other providers
 - **Per-provider tasks**: Assign different providers to different task types
 - **Circuit breaker**: Failed providers temporarily disabled to prevent cascading failures
+
+### Web Search Providers
+
+Configure which search backend(s) to use for fetching web sources:
+
+```bash
+# Primary search provider
+SEARCH_PROVIDER=bing              # Default (free, no API key)
+
+# Fallback chain (tried in order when primary fails or returns insufficient results)
+SEARCH_FALLBACK_CHAIN=wikipedia,arxiv
+```
+
+#### Available Providers
+
+| Provider | API Key Required | Free Tier | Best For |
+|----------|------------------|-----------|----------|
+| `bing` | No | Unlimited | General search (default) |
+| `brave` | `BRAVE_API_KEY` | $5/month | Quality results, privacy |
+| `serpapi` | `SERPAPI_API_KEY` | 100/month | Google results |
+| `tavily` | `TAVILY_API_KEY` | 1000/month | AI-optimized search |
+| `exa` | `EXA_API_KEY` | $5 credits | Semantic/embeddings search |
+| `wikipedia` | No | Unlimited | Encyclopedia content |
+| `arxiv` | No | Unlimited | Research papers |
+
+#### Example Configurations
+
+```bash
+# Free setup (default)
+SEARCH_PROVIDER=bing
+SEARCH_FALLBACK_CHAIN=wikipedia,arxiv
+
+# Premium setup with multiple fallbacks
+SEARCH_PROVIDER=brave
+SEARCH_FALLBACK_CHAIN=tavily,serpapi,bing,wikipedia,arxiv
+BRAVE_API_KEY=BSA...
+TAVILY_API_KEY=tvly-...
+SERPAPI_API_KEY=...
+
+# Research-focused (academic papers priority)
+SEARCH_PROVIDER=arxiv
+SEARCH_FALLBACK_CHAIN=wikipedia,bing
+
+# AI-optimized search
+SEARCH_PROVIDER=tavily
+SEARCH_FALLBACK_CHAIN=exa,brave,bing,wikipedia
+TAVILY_API_KEY=tvly-...
+EXA_API_KEY=...
+```
+
+The system tries providers in order until it has enough results. If `brave` returns 3 results but you need 5, it continues to `tavily`, then `serpapi`, etc.
 
 ---
 
@@ -861,8 +912,9 @@ CLI → Load .env → Initialize ExecutorLimiter
 
 **Web Search** (`web_search.py`)
 
-- Handles web search and source fetching
-- Uses global executor and semaphore
+- Multi-provider search with configurable fallback chain
+- Supports: Brave, SerpAPI, Tavily, Exa, Bing, Wikipedia, arXiv
+- Uses global executor and semaphore for concurrency control
 
 **Datastore** (`datastore.py`)
 

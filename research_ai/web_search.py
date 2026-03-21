@@ -1,7 +1,13 @@
 """HTTP connector using requests + BeautifulSoup with a synchronous fetch wrapped for async use.
 
-This connector performs Bing HTML search, then falls back to Wikipedia and arXiv
-when search results are sparse. It returns real online sources whenever possible.
+This connector supports multiple search backends:
+- Bing HTML scraping (default, free) with Wikipedia/arXiv fallbacks
+- Brave Search API (requires BRAVE_API_KEY)
+- SerpAPI/Google (requires SERPAPI_API_KEY)
+- Tavily (requires TAVILY_API_KEY)
+- Exa (requires EXA_API_KEY)
+
+Set SEARCH_PROVIDER env var to choose: bing, brave, serpapi, tavily, exa
 """
 
 import asyncio
@@ -11,6 +17,7 @@ import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 import re
+import json
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -18,6 +25,19 @@ from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from .executor_limiter import get_executor, get_semaphore
 from .logger import log
+
+# Search provider configuration
+# SEARCH_PROVIDER: Primary provider (bing, brave, serpapi, tavily, exa)
+# SEARCH_FALLBACK_CHAIN: Comma-separated fallback order when primary fails or returns insufficient results
+# Example: SEARCH_FALLBACK_CHAIN=brave,serpapi,bing,tavily,wikipedia,arxiv
+SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "bing").lower()
+SEARCH_FALLBACK_CHAIN = os.environ.get("SEARCH_FALLBACK_CHAIN", "wikipedia,arxiv").lower()
+
+# API keys for paid providers
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
+SERPAPI_API_KEY = os.environ.get("SERPAPI_API_KEY", "")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+EXA_API_KEY = os.environ.get("EXA_API_KEY", "")
 
 # Retry configuration for web search
 BING_MAX_RETRIES = 3
@@ -93,6 +113,10 @@ def _get_session() -> requests.Session:
                 "https": PROXY_URL,
             }
             log.progress(f"[web_search] Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+        
+        # Log which search provider is configured
+        if SEARCH_PROVIDER != "bing":
+            log.progress(f"[web_search] Using search provider: {SEARCH_PROVIDER}")
     
     return _global_session
 
@@ -274,166 +298,204 @@ class WebSearchConnector:
         # All retries failed - return empty, will fall back to Wikipedia/arXiv
         return []
 
+    def _brave_search(self, session, query: str, n: int = 10) -> list:
+        """Search using Brave Search API. Returns list of result dicts."""
+        if not BRAVE_API_KEY:
+            log.error("[web_search] BRAVE_API_KEY not set")
+            return []
+        
+        results = []
+        try:
+            resp = session.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": n},
+                headers={"X-Subscription-Token": BRAVE_API_KEY, "Accept": "application/json"},
+                timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for item in data.get("web", {}).get("results", []):
+                title = item.get("title", "")
+                url = item.get("url", "")
+                # Brave provides description and extra_snippets for context
+                text = item.get("description", "")
+                extra = item.get("extra_snippets", [])
+                if extra:
+                    text = text + " " + " ".join(extra)
+                
+                if url and text:
+                    results.append({"title": title or url, "url": url, "text": text.strip()})
+            
+            log.progress(f"[web_search] Brave returned {len(results)} results for '{query[:50]}...'")
+        except Exception as e:
+            log.error(f"[web_search] Brave search failed: {e}")
+        
+        return results
+
+    def _serpapi_search(self, session, query: str, n: int = 10) -> list:
+        """Search using SerpAPI (Google). Returns list of result dicts."""
+        if not SERPAPI_API_KEY:
+            log.error("[web_search] SERPAPI_API_KEY not set")
+            return []
+        
+        results = []
+        try:
+            resp = session.get(
+                "https://serpapi.com/search.json",
+                params={
+                    "engine": "google",
+                    "q": query,
+                    "api_key": SERPAPI_API_KEY,
+                    "num": n,
+                    "hl": "en",
+                    "gl": "us"
+                },
+                timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            # Extract organic results
+            for item in data.get("organic_results", []):
+                title = item.get("title", "")
+                url = item.get("link", "")
+                text = item.get("snippet", "")
+                
+                if url and text:
+                    results.append({"title": title or url, "url": url, "text": text.strip()})
+            
+            log.progress(f"[web_search] SerpAPI returned {len(results)} results for '{query[:50]}...'")
+        except Exception as e:
+            log.error(f"[web_search] SerpAPI search failed: {e}")
+        
+        return results
+
+    def _tavily_search(self, session, query: str, n: int = 10) -> list:
+        """Search using Tavily API. Returns list of result dicts."""
+        if not TAVILY_API_KEY:
+            log.error("[web_search] TAVILY_API_KEY not set")
+            return []
+        
+        results = []
+        try:
+            resp = session.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_API_KEY,
+                    "query": query,
+                    "max_results": n,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "search_depth": "advanced"
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=20
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for item in data.get("results", []):
+                title = item.get("title", "")
+                url = item.get("url", "")
+                text = item.get("content", "")
+                
+                if url and text:
+                    results.append({"title": title or url, "url": url, "text": text.strip()})
+            
+            log.progress(f"[web_search] Tavily returned {len(results)} results for '{query[:50]}...'")
+        except Exception as e:
+            log.error(f"[web_search] Tavily search failed: {e}")
+        
+        return results
+
+    def _exa_search(self, session, query: str, n: int = 10) -> list:
+        """Search using Exa API. Returns list of result dicts."""
+        if not EXA_API_KEY:
+            log.error("[web_search] EXA_API_KEY not set")
+            return []
+        
+        results = []
+        try:
+            resp = session.post(
+                "https://api.exa.ai/search",
+                json={
+                    "query": query,
+                    "numResults": n,
+                    "type": "auto",
+                    "contents": {"text": {"maxCharacters": 3000}}
+                },
+                headers={
+                    "x-api-key": EXA_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                timeout=20
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for item in data.get("results", []):
+                title = item.get("title", "")
+                url = item.get("url", "")
+                text = item.get("text", "")
+                
+                if url and text:
+                    results.append({"title": title or url, "url": url, "text": text.strip()})
+            
+            log.progress(f"[web_search] Exa returned {len(results)} results for '{query[:50]}...'")
+        except Exception as e:
+            log.error(f"[web_search] Exa search failed: {e}")
+        
+        return results
+
     def _sync_fetch(self, topic: str, n: int = 3):
+        """Fetch sources using the configured search provider with fallback chain."""
         results = []
         seen_urls = set()
         topic_terms = self._terms(topic)
-        bing_results = 0  # Track how many results came from Bing vs fallback
-        try:
-            # OPTIMIZATION: Use global session with connection pooling
-            s = _get_session()
-            links = []
-            # Generate contextual query variants that preserve the full meaning
-            # Plain topic first (quoted queries can give poor results on some topics)
-            query_variants = [
-                topic,  # Plain topic first
-                f"{topic} guide",
-                f"{topic} tutorial",
-                f"how to {topic}" if not topic.lower().startswith("how") else topic,
-            ]
-            # Collect many candidate links across query variants (with retry)
-            for q in query_variants:
-                new_links = self._bing_search_with_retry(s, q, s.headers)
-                links.extend(new_links)
-                # stop collecting once we have a reasonable pool
-                if len(links) >= max(20, n * 6):
-                    break
-            # Deduplicate and prioritize review/retailer domains and non-wikipedia domains
-            preferred_domains = [
-                'dpreview.com', 'dxomark.com', 'bloomberg.com', 'bhphotovideo.com', 'bhphotovideo', 'adorama.com', 'adorama',
-                'photographyblog.com', 'thephoblographer.com', 'thephoblographer', 'petaPixel.com', 'petapixel.com', 'lensrentals.com',
-                'fstoppers.com', 'kenrockwell.com', 'digitalcameraworld.com', 'dpreview.com', 'ephotozine.com', 'cameralabs.com'
-            ]
-            ordered = []
-            seen_link_urls = set()
-            # first: preferred domains
-            for title, url in links:
-                if url in seen_link_urls:
-                    continue
-                for d in preferred_domains:
-                    if d in url.lower():
-                        ordered.append((title, url))
-                        seen_link_urls.add(url)
-                        break
-            # second: non-wikipedia domains
-            for title, url in links:
-                if url in seen_link_urls:
-                    continue
-                if 'wikipedia.org' not in url.lower():
-                    ordered.append((title, url))
-                    seen_link_urls.add(url)
-            # finally: wikipedia domains
-            for title, url in links:
-                if url in seen_link_urls:
-                    continue
-                ordered.append((title, url))
-                seen_link_urls.add(url)
-            # Limit candidate list
-            ordered = ordered[: max(n * 8, 40)]
-            # Fetch pages in order until we have n good results
-            global _url_cache, _url_cache_hits
-            fetch_ok, fetch_fail = 0, 0
-            for title, url in ordered:
-                if len(results) >= n:
-                    break
-                # OPTIMIZATION: Check URL cache first
-                if url in _url_cache:
-                    cached_title, text = _url_cache[url]
-                    _url_cache_hits += 1
-                    if _url_cache_hits % 20 == 0:
-                        log.progress(f"[url_cache] hits={_url_cache_hits}")
-                    fetch_ok += 1
-                else:
-                    # Use robust fetch with retry and rotating UAs
-                    text = _fetch_url_content(s, url)
-                    if text:
-                        _url_cache[url] = (title, text)
-                        fetch_ok += 1
-                    else:
-                        fetch_fail += 1
-                
-                if url and url not in seen_urls and text:
-                    score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
-                    # accept slightly lower score to increase diversity but keep relevance
-                    if score >= 1:
-                        results.append({"title": title or url, "url": url, "text": text})
+        s = _get_session()
+        
+        # Build provider chain: primary + fallbacks
+        primary = SEARCH_PROVIDER.strip()
+        fallbacks = [f.strip() for f in SEARCH_FALLBACK_CHAIN.split(",") if f.strip()]
+        
+        # Remove primary from fallbacks if present to avoid duplicate
+        providers = [primary] + [f for f in fallbacks if f != primary]
+        
+        log.progress(f"[web_search] Provider chain: {' → '.join(providers)}")
+        
+        # Try each provider in order until we have enough results
+        providers_used = []
+        for provider in providers:
+            if len(results) >= n:
+                break
+            
+            needed = n - len(results)
+            provider_results = self._fetch_from_provider(s, provider, topic, needed * 2, seen_urls)
+            
+            if provider_results:
+                providers_used.append(provider)
+                for item in provider_results:
+                    url = item.get("url", "")
+                    if url and url not in seen_urls:
+                        results.append(item)
                         seen_urls.add(url)
-            bing_results = len(results)
-            _log_web_stats("", fetch_ok=fetch_ok, fetch_fail=fetch_fail)
-        except Exception as e:
-            log.error(f"[web_search] Bing search failed for '{topic}': {e}")
-        # If we didn't reach n, fallback to Wikipedia but limit wikipedia dominance
-        if len(results) < n:
-            try:
-                # Extract key terms for better Wikipedia search (long topics fail otherwise)
-                search_query = self._extract_search_query(topic)
-                query = urllib.parse.quote_plus(search_query)
-                w_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&srlimit={max(5, (n-len(results))*3)}"
-                w_resp = s.get(w_url, timeout=10)
-                data = w_resp.json()
-                for item in data.get("query", {}).get("search", []):
-                    if len(results) >= n:
-                        break
-                    title = item.get("title", "").strip()
-                    if not title:
-                        continue
-                    p_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
-                    p_resp = s.get(p_url, timeout=10)
-                    p_json = p_resp.json() if p_resp.status_code == 200 else {}
-                    text = (p_json.get("extract") or "").strip()
-                    page_url = p_json.get("content_urls", {}).get("desktop", {}).get("page", "")
-                    if not page_url:
-                        page_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
-                    if page_url and page_url not in seen_urls and text:
-                        # Wikipedia is a fallback - accept results without strict relevance filtering
-                        # The Wikipedia search API already returns relevant results
-                        results.append({"title": title, "url": page_url, "text": text})
-                        seen_urls.add(page_url)
-            except Exception as e:
-                log.error(f"[web_search] Wikipedia fallback failed for '{topic[:50]}': {e}")
-        # Fallback 2: arXiv abstracts for research-heavy topics
-        if len(results) < n:
-            try:
-                # Extract key terms for arXiv search
-                search_query = self._extract_search_query(topic, max_words=5)
-                q = urllib.parse.quote_plus(search_query)
-                a_url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max(5, (n-len(results))*2)}"
-                # Use rate-limited request to avoid 429 errors
-                a_resp = _arxiv_rate_limited_get(s, a_url, timeout=10)
-                if a_resp.status_code == 200:
-                    ns = {"atom": "http://www.w3.org/2005/Atom"}
-                    root = ET.fromstring(a_resp.text)
-                    for entry in root.findall("atom:entry", ns):
-                        title = (entry.find("atom:title", ns).text or "").strip() if entry.find("atom:title", ns) is not None else ""
-                        summary = (entry.find("atom:summary", ns).text or "").strip() if entry.find("atom:summary", ns) is not None else ""
-                        link = ""
-                        for l in entry.findall("atom:link", ns):
-                            if l.get("type") == "text/html":
-                                link = l.get("href")
-                                break
-                        if link and link not in seen_urls and summary:
-                            # arXiv is a fallback - accept results without strict relevance filtering
-                            results.append({"title": title or link, "url": link, "text": summary})
-                            seen_urls.add(link)
                         if len(results) >= n:
                             break
-                elif a_resp.status_code == 429:
-                    log.warning(f"[web_search] arXiv rate limited for '{topic[:50]}' - skipping")
-            except Exception as e:
-                log.error(f"[web_search] arXiv fallback failed for '{topic[:50]}': {e}")
+            
+            if len(results) < n and provider_results:
+                log.progress(f"[web_search] {provider} returned {len(provider_results)}, need {n - len(results)} more...")
         
-        # Track search stats: bing success vs fallback vs failed
+        # Log results
         if not results:
             _log_web_stats("failed")
-            log.warning(f"[web_search] No sources found for '{topic}' (Bing + Wikipedia + arXiv all failed)")
-        elif bing_results >= n:
-            _log_web_stats("bing")
-            log.progress(f"[web_search] Found {len(results)} sources for '{topic[:50]}...'")
+            log.warning(f"[web_search] No sources found for '{topic}' (all providers failed)")
         else:
-            _log_web_stats("fallback")
-            log.progress(f"[web_search] Found {len(results)} sources for '{topic[:50]}...' (with fallback)")
+            primary_stat = providers_used[0] if providers_used else "failed"
+            _log_web_stats(primary_stat if len(providers_used) == 1 else "fallback")
+            log.progress(f"[web_search] Found {len(results)} sources via {'+'.join(providers_used)} for '{topic[:50]}...'")
         
-        # Rank and return up to n results
+        # Score and return top n results
         scored = []
         for r in results:
             combined = f"{r.get('title', '')} {r.get('text', '')[:1200]}"
@@ -442,6 +504,167 @@ class WebSearchConnector:
         scored.sort(key=lambda x: x[0], reverse=True)
         filtered = [r for score, r in scored if score > 0]
         return (filtered or [r for _, r in scored])[:n]
+
+    def _fetch_from_provider(self, session, provider: str, topic: str, n: int, seen_urls: set) -> list:
+        """Fetch from a specific provider. Returns list of result dicts."""
+        provider = provider.lower().strip()
+        
+        if provider == "brave":
+            return self._brave_search(session, topic, n)
+        elif provider == "serpapi":
+            return self._serpapi_search(session, topic, n)
+        elif provider == "tavily":
+            return self._tavily_search(session, topic, n)
+        elif provider == "exa":
+            return self._exa_search(session, topic, n)
+        elif provider == "bing":
+            return self._bing_fetch(session, topic, n, seen_urls)
+        elif provider == "wikipedia":
+            return self._wikipedia_search(session, topic, n, seen_urls)
+        elif provider == "arxiv":
+            return self._arxiv_search(session, topic, n, seen_urls)
+        else:
+            log.warning(f"[web_search] Unknown provider: {provider}")
+            return []
+
+    def _bing_fetch(self, session, topic: str, n: int, seen_urls: set) -> list:
+        """Fetch from Bing with content extraction."""
+        results = []
+        links = []
+        
+        # Generate query variants
+        query_variants = [
+            topic,
+            f"{topic} guide",
+            f"{topic} tutorial",
+            f"how to {topic}" if not topic.lower().startswith("how") else topic,
+        ]
+        
+        for q in query_variants:
+            new_links = self._bing_search_with_retry(session, q, session.headers)
+            links.extend(new_links)
+            if len(links) >= max(20, n * 6):
+                break
+        
+        # Deduplicate and prioritize
+        preferred_domains = [
+            'dpreview.com', 'dxomark.com', 'bloomberg.com', 'bhphotovideo.com',
+            'adorama.com', 'photographyblog.com', 'petapixel.com', 'lensrentals.com',
+            'fstoppers.com', 'kenrockwell.com', 'digitalcameraworld.com'
+        ]
+        ordered = []
+        seen_link_urls = set()
+        
+        # Preferred domains first
+        for title, url in links:
+            if url in seen_link_urls or url in seen_urls:
+                continue
+            for d in preferred_domains:
+                if d in url.lower():
+                    ordered.append((title, url))
+                    seen_link_urls.add(url)
+                    break
+        
+        # Non-wikipedia next
+        for title, url in links:
+            if url in seen_link_urls or url in seen_urls:
+                continue
+            if 'wikipedia.org' not in url.lower():
+                ordered.append((title, url))
+                seen_link_urls.add(url)
+        
+        # Wikipedia last
+        for title, url in links:
+            if url in seen_link_urls or url in seen_urls:
+                continue
+            ordered.append((title, url))
+            seen_link_urls.add(url)
+        
+        ordered = ordered[:max(n * 8, 40)]
+        
+        # Fetch content
+        global _url_cache, _url_cache_hits
+        topic_terms = self._terms(topic)
+        
+        for title, url in ordered:
+            if len(results) >= n:
+                break
+            
+            if url in _url_cache:
+                cached_title, text = _url_cache[url]
+                _url_cache_hits += 1
+            else:
+                text = _fetch_url_content(session, url)
+                if text:
+                    _url_cache[url] = (title, text)
+            
+            if url and text:
+                score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
+                if score >= 1:
+                    results.append({"title": title or url, "url": url, "text": text})
+        
+        return results
+
+    def _wikipedia_search(self, session, topic: str, n: int, seen_urls: set) -> list:
+        """Fetch from Wikipedia API."""
+        results = []
+        try:
+            search_query = self._extract_search_query(topic)
+            query = urllib.parse.quote_plus(search_query)
+            w_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&srlimit={max(5, n*3)}"
+            w_resp = session.get(w_url, timeout=10)
+            data = w_resp.json()
+            
+            for item in data.get("query", {}).get("search", []):
+                if len(results) >= n:
+                    break
+                title = item.get("title", "").strip()
+                if not title:
+                    continue
+                p_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
+                p_resp = session.get(p_url, timeout=10)
+                p_json = p_resp.json() if p_resp.status_code == 200 else {}
+                text = (p_json.get("extract") or "").strip()
+                page_url = p_json.get("content_urls", {}).get("desktop", {}).get("page", "")
+                if not page_url:
+                    page_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+                if page_url and page_url not in seen_urls and text:
+                    results.append({"title": title, "url": page_url, "text": text})
+        except Exception as e:
+            log.error(f"[web_search] Wikipedia search failed: {e}")
+        
+        return results
+
+    def _arxiv_search(self, session, topic: str, n: int, seen_urls: set) -> list:
+        """Fetch from arXiv API."""
+        results = []
+        try:
+            search_query = self._extract_search_query(topic, max_words=5)
+            q = urllib.parse.quote_plus(search_query)
+            a_url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max(5, n*2)}"
+            a_resp = _arxiv_rate_limited_get(session, a_url, timeout=10)
+            
+            if a_resp.status_code == 200:
+                ns = {"atom": "http://www.w3.org/2005/Atom"}
+                root = ET.fromstring(a_resp.text)
+                for entry in root.findall("atom:entry", ns):
+                    if len(results) >= n:
+                        break
+                    title = (entry.find("atom:title", ns).text or "").strip() if entry.find("atom:title", ns) is not None else ""
+                    summary = (entry.find("atom:summary", ns).text or "").strip() if entry.find("atom:summary", ns) is not None else ""
+                    link = ""
+                    for l in entry.findall("atom:link", ns):
+                        if l.get("type") == "text/html":
+                            link = l.get("href")
+                            break
+                    if link and link not in seen_urls and summary:
+                        results.append({"title": title or link, "url": link, "text": summary})
+            elif a_resp.status_code == 429:
+                log.warning(f"[web_search] arXiv rate limited - skipping")
+        except Exception as e:
+            log.error(f"[web_search] arXiv search failed: {e}")
+        
+        return results
 
     def _terms(self, text: str):
         raw = re.findall(r"[a-z0-9]+", (text or "").lower())
