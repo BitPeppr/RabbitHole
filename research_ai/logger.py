@@ -265,8 +265,9 @@ class Logger:
         llm_calls: int = 0,
         llm_tokens: int = 0,
         estimated_total: int = None,
+        elapsed_sec: float = 0,
     ):
-        """Log formatted progress statistics with progress bar.
+        """Log formatted progress statistics with progress bar and ETA.
 
         Args:
             pending: Number of pending tasks
@@ -275,10 +276,12 @@ class Logger:
             llm_calls: Number of LLM API calls
             llm_tokens: Total LLM tokens used
             estimated_total: Estimated total tasks (for percentage calculation)
+            elapsed_sec: Seconds elapsed since job start (for ETA calculation)
         """
         tokens_fmt = format_tokens(llm_tokens)
         
         # Calculate progress percentage
+        percent = 0
         if estimated_total and estimated_total > 0:
             # Use actual progress but cap at 90% until truly done
             actual_total = pending + in_progress + done
@@ -300,17 +303,48 @@ class Logger:
             else:
                 bar = make_progress_bar(0, width=20, use_color=self._use_color)
         
+        # Calculate ETA based on elapsed time and progress
+        # Use a "work done" metric that includes partial credit for in_progress tasks
+        eta_str = ""
+        work_done = done + (in_progress * 0.5)  # Count in-progress as 50% done
+        total_work = pending + in_progress + done
+        work_percent = (work_done / total_work * 100) if total_work > 0 else 0
+        
+        if elapsed_sec > 30 and work_percent > 1:  # Need some data to estimate
+            # Time per percent of work, extrapolate to remaining
+            remaining_percent = 100 - work_percent
+            time_per_percent = elapsed_sec / work_percent
+            eta_sec = time_per_percent * remaining_percent
+            eta_str = f" ETA: {self._format_duration(eta_sec)}"
+        elif elapsed_sec > 0:
+            # Show elapsed time while building estimate
+            eta_str = f" ({self._format_duration(elapsed_sec)} elapsed)"
+        
         msg = (
             f"{bar} "
             f"tasks: {done}/{pending + in_progress + done} "
             f"(+{in_progress} active) "
             f"llm: {llm_calls} calls, {tokens_fmt} tokens"
+            f"{eta_str}"
         )
         # In TUI mode, update progress bar in-place; otherwise use standard logging
         if self._is_tui_mode():
             self._print_progress_tui(msg)
         else:
             self.progress(msg)
+
+    def _format_duration(self, seconds: float) -> str:
+        """Format seconds as human-readable duration (e.g., '5m 30s', '1h 15m')."""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            mins = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{mins}m {secs}s" if secs > 0 else f"{mins}m"
+        else:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
 
     def job_started(
         self,

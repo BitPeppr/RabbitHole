@@ -93,6 +93,8 @@ class ProviderRegistry:
     """
     
     MAX_REROUTES = 10  # Maximum reroute attempts before giving up
+    RATE_LIMIT_RETRY_DELAY = 5  # Seconds to wait when all providers are rate limited
+    MAX_RATE_LIMIT_RETRIES = 12  # Max retries when all rate limited (~60s total)
     
     def __init__(self):
         self.providers: Dict[str, ProviderBase] = {}  # provider_id -> provider
@@ -100,6 +102,10 @@ class ProviderRegistry:
         self.fallback_chain: List[str] = []  # Provider types in fallback order
         self._call_counter = 0
         self._lock = threading.Lock()
+        # Global rate limit coordination - when one request hits rate limit,
+        # all other requests should wait instead of bombarding the API
+        self._global_backoff_until = 0.0  # Timestamp when backoff ends
+        self._backoff_lock = threading.Lock()
     
     def register(self, provider: ProviderBase):
         """Register a provider instance."""
@@ -120,6 +126,32 @@ class ProviderRegistry:
     def set_fallback_chain(self, chain: List[str]):
         """Set the fallback chain (provider types in priority order)."""
         self.fallback_chain = chain
+    
+    def _set_global_backoff(self, seconds: float):
+        """Set global backoff that affects ALL concurrent requests.
+        
+        When one request hits rate limits on all providers, this prevents
+        other concurrent requests from also hammering the APIs.
+        """
+        with self._backoff_lock:
+            new_until = time.time() + seconds
+            # Only extend backoff, never shorten it
+            if new_until > self._global_backoff_until:
+                self._global_backoff_until = new_until
+                log.warning(f"[registry] Global rate limit backoff set for {seconds:.0f}s (all requests will wait)")
+    
+    def _wait_for_global_backoff(self) -> float:
+        """Wait if global backoff is active. Returns seconds waited."""
+        with self._backoff_lock:
+            wait_until = self._global_backoff_until
+        
+        now = time.time()
+        if now < wait_until:
+            wait_time = wait_until - now
+            log.progress(f"[registry] Waiting {wait_time:.1f}s for global rate limit backoff...")
+            time.sleep(wait_time)
+            return wait_time
+        return 0
     
     def get_providers_for_task(self, task_type: str) -> List[ProviderBase]:
         """Get all providers enabled for a task type."""
@@ -176,11 +208,13 @@ class ProviderRegistry:
         """Make LLM call with automatic rerouting on failures.
         
         This method ensures the call is never forgotten:
-        1. Select provider for task type
-        2. Attempt call
-        3. On rate limit: mark provider, reroute to another
-        4. On other failure: mark provider degraded, reroute
-        5. Continue until success or all providers exhausted
+        1. Wait for any global rate limit backoff (coordinated across all requests)
+        2. Select provider for task type
+        3. Attempt call
+        4. On rate limit: mark provider, set global backoff, reroute to another
+        5. On other failure: mark provider degraded, reroute
+        6. If all providers rate limited: set global backoff and retry
+        7. Continue until success or max retries exhausted
         
         Args:
             task_type: The task type for routing
@@ -192,47 +226,68 @@ class ProviderRegistry:
             Tuple of (content, usage)
             
         Raises:
-            Exception: If all providers fail
+            Exception: If all providers fail after retries
         """
-        attempted = []  # Track attempted provider IDs
-        last_error = None
+        rate_limit_retries = 0
         
-        for attempt in range(self.MAX_REROUTES):
-            provider = self.select_provider(task_type, exclude=attempted)
+        while rate_limit_retries <= self.MAX_RATE_LIMIT_RETRIES:
+            # COORDINATED THROTTLE: Wait if another request triggered global backoff
+            self._wait_for_global_backoff()
             
-            if not provider:
-                # No healthy providers available
-                if attempted:
-                    raise Exception(
-                        f"All providers exhausted for task {task_type}. "
-                        f"Attempted: {attempted}. Last error: {last_error}"
-                    )
-                else:
-                    raise Exception(f"No providers configured for task {task_type}")
+            attempted = []  # Track attempted provider IDs this round
+            last_error = None
+            all_rate_limited = True  # Track if we're failing due to rate limits
             
-            attempted.append(provider.provider_id)
-            
-            try:
-                log.progress(f"[registry] Attempting {provider.provider_id} for {task_type}")
-                result = provider.call(messages, temperature=temperature, model=model)
-                provider.mark_success()
-                return result
+            for attempt in range(self.MAX_REROUTES):
+                provider = self.select_provider(task_type, exclude=attempted)
                 
-            except RateLimitError as e:
-                log.warning(f"Rate limit on {provider.provider_id}, rerouting... ({e})")
-                provider.mark_rate_limited(e.retry_after)
-                last_error = e
-                # Continue to try next provider
+                if not provider:
+                    # No healthy providers available
+                    if not attempted:
+                        raise Exception(f"No providers configured for task {task_type}")
+                    break  # Exit inner loop, will check rate limit retry
                 
-            except Exception as e:
-                log.error(f"Provider {provider.provider_id} failed: {e}")
-                provider.mark_failure()
-                last_error = e
-                # Continue to try next provider
+                attempted.append(provider.provider_id)
+                
+                try:
+                    log.progress(f"[registry] Attempting {provider.provider_id} for {task_type}")
+                    result = provider.call(messages, temperature=temperature, model=model)
+                    provider.mark_success()
+                    return result
+                    
+                except RateLimitError as e:
+                    log.warning(f"Rate limit on {provider.provider_id}, rerouting... ({e})")
+                    provider.mark_rate_limited(e.retry_after)
+                    # Set a short global backoff so other requests pause briefly
+                    # This prevents thundering herd on remaining providers
+                    self._set_global_backoff(min(e.retry_after or 5, 10))
+                    last_error = e
+                    # Continue to try next provider
+                    
+                except Exception as e:
+                    log.error(f"Provider {provider.provider_id} failed: {e}")
+                    provider.mark_failure()
+                    last_error = e
+                    all_rate_limited = False  # Non-rate-limit error
+                    # Continue to try next provider
+            
+            # All providers exhausted this round
+            if all_rate_limited and rate_limit_retries < self.MAX_RATE_LIMIT_RETRIES:
+                # All failures were rate limits - set global backoff and retry
+                rate_limit_retries += 1
+                delay = self.RATE_LIMIT_RETRY_DELAY * min(rate_limit_retries, 4)  # Up to 20s
+                # Set global backoff so ALL concurrent requests wait together
+                self._set_global_backoff(delay)
+                log.warning(f"All providers rate limited for {task_type}, global backoff {delay}s (retry {rate_limit_retries}/{self.MAX_RATE_LIMIT_RETRIES})")
+                time.sleep(delay)
+                continue
+            else:
+                # Non-rate-limit failures or max retries reached
+                break
         
         raise Exception(
-            f"Failed after {self.MAX_REROUTES} reroute attempts for task {task_type}. "
-            f"Attempted: {attempted}. Last error: {last_error}"
+            f"Failed after exhausting all providers for task {task_type}. "
+            f"Last attempted: {attempted}. Last error: {last_error}"
         )
     
     def get_all_usage(self) -> Dict[str, Dict]:

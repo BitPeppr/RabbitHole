@@ -5,3 +5,6 @@ beautifulsoup4>=4.11.0
 # openai>=0.27.0
 # Optional async HTTP client:
 # aiohttp>=3.8.0
+# Optional: Playwright for JS-rendered pages (Bing anti-bot bypass)
+# Install with: pip install playwright && playwright install chromium
+# playwright>=1.40.0

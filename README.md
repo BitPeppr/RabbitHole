@@ -380,18 +380,29 @@ When `PROGRESS_LOG=1` (default), you'll see:
 [queue] +task=task-abc depth=2 topic=Neural networks in medical imaging
 [worker:0] done task=task-xyz docs=50 spawned=12
 
-[progress] pending=150 in_progress=1 done=23 llm_calls=47 llm_tokens=12450
+[progress] [██████████░░░░░░░░░░]  50% tasks: 23/46 (+1 active) llm: 47 calls, 12.5K tokens ETA: 5m 30s
 ```
-
-With a progress bar at the bottom.
 
 **Key metrics**:
 
+- **Progress bar**: Visual indicator with percentage complete
+- **ETA**: Estimated time remaining based on current progress
 - **pending**: Tasks waiting to be processed
 - **in_progress**: Currently running tasks (≤ MAX_CONCURRENT_TASKS)
 - **done**: Completed tasks
 - **llm_calls**: Total API calls made
 - **llm_tokens**: Total tokens used (cost indicator)
+
+**Web Search Stats** (logged every 5 failures):
+
+```bash
+[web_stats] searches=100 bing=85% fallback=10% failed=5% | fetches=500 ok=92%
+```
+
+- **bing%**: Searches that succeeded from Bing directly
+- **fallback%**: Searches that needed Wikipedia/arXiv fallback
+- **failed%**: Searches with no sources found
+- **fetches ok%**: Individual URL content fetch success rate
 
 ### Output Format
 
@@ -727,14 +738,19 @@ Examples:
 
 ### API Rate Limit Errors
 
-**Symptoms**: "Rate limit exceeded" or HTTP 429 errors
+**Symptoms**: "Rate limit exceeded" or HTTP 429 errors, or "All providers rate limited" warnings
 
-**Solutions**:
+**Automatic Handling**: The system has coordinated rate limit throttling:
+- When one request hits a rate limit, ALL concurrent requests pause together
+- This prevents "thundering herd" where multiple requests independently discover limits
+- Automatic retry with exponential backoff (up to 60 seconds) before failing
+
+**Solutions** (if automatic retry fails):
 
 1. Set `MAX_CONCURRENT_TASKS=1` (slower but stays under limits)
 2. Use free models with higher limits: `arcee-ai/trinity-large-preview:free`
 3. Check OpenRouter dashboard for your account limits
-4. Wait and retry (rate limits reset over time)
+4. Configure multiple API keys to increase effective rate limits
 5. Upgrade to paid OpenRouter tier for higher limits
 
 ### Very Slow Progress

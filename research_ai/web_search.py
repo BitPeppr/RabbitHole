@@ -6,6 +6,7 @@ when search results are sparse. It returns real online sources whenever possible
 
 import asyncio
 import base64
+import os
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -22,40 +23,39 @@ from .logger import log
 BING_MAX_RETRIES = 3
 BING_RETRY_DELAY_SEC = 2
 
-# Rate limiting for web searches to prevent overwhelming external services
-_web_search_lock = None
-_last_web_search_time = 0
+# Proxy configuration (optional - helps bypass IP blocks)
+# Set PROXY_URL to use a specific proxy, e.g., "http://user:pass@proxy.example.com:8080"
+PROXY_URL = os.environ.get("PROXY_URL", "")
 
-def _get_web_search_min_interval():
-    """Get minimum interval between web searches from env (default 0.5s)."""
-    import os
-    try:
-        return float(os.environ.get("WEB_SEARCH_DELAY_SEC", "0.5"))
-    except ValueError:
-        return 0.5
+# arXiv rate limiting - they enforce strict limits and return 429 when exceeded
+# We use a global lock and timestamp to throttle requests across all workers
+import threading
+_arxiv_lock = threading.Lock()
+_arxiv_last_request = 0.0
+_arxiv_backoff_until = 0.0  # If we hit 429, back off until this time
+ARXIV_MIN_DELAY_SEC = 3.0  # arXiv recommends max 1 request per 3 seconds
 
-def _get_web_search_lock():
-    """Get or create the global web search lock."""
-    global _web_search_lock
-    if _web_search_lock is None:
-        import threading
-        _web_search_lock = threading.Lock()
-    return _web_search_lock
+# Web search stats tracking
+_stats_lock = threading.Lock()
+_web_stats = {"bing": 0, "fallback": 0, "failed": 0, "fetch_ok": 0, "fetch_fail": 0}
 
-def _rate_limit_web_search():
-    """Ensure minimum interval between web searches to avoid rate limits."""
-    global _last_web_search_time
-    import time as time_module
-    min_interval = _get_web_search_min_interval()
-    if min_interval <= 0:
-        return  # Rate limiting disabled
-    lock = _get_web_search_lock()
-    with lock:
-        now = time_module.time()
-        elapsed = now - _last_web_search_time
-        if elapsed < min_interval:
-            time_module.sleep(min_interval - elapsed)
-        _last_web_search_time = time_module.time()
+def _log_web_stats(source_type: str, fetch_ok: int = 0, fetch_fail: int = 0):
+    """Track and periodically log web search statistics."""
+    with _stats_lock:
+        if source_type:
+            _web_stats[source_type] = _web_stats.get(source_type, 0) + 1
+        _web_stats["fetch_ok"] += fetch_ok
+        _web_stats["fetch_fail"] += fetch_fail
+        
+        total = _web_stats["bing"] + _web_stats["fallback"] + _web_stats["failed"]
+        # Log every 5 failures or every 20 total searches
+        if _web_stats["failed"] > 0 and _web_stats["failed"] % 5 == 0:
+            pct_bing = 100 * _web_stats["bing"] / total if total else 0
+            pct_fall = 100 * _web_stats["fallback"] / total if total else 0
+            pct_fail = 100 * _web_stats["failed"] / total if total else 0
+            fetch_total = _web_stats["fetch_ok"] + _web_stats["fetch_fail"]
+            fetch_pct = 100 * _web_stats["fetch_ok"] / fetch_total if fetch_total else 0
+            log.progress(f"[web_stats] searches={total} bing={pct_bing:.0f}% fallback={pct_fall:.0f}% failed={pct_fail:.0f}% | fetches={fetch_total} ok={fetch_pct:.0f}%")
 
 # Global persistent session with connection pooling
 _global_session = None
@@ -78,13 +78,124 @@ def _get_session() -> requests.Session:
         )
         _global_session.mount("http://", adapter)
         _global_session.mount("https://", adapter)
-        _global_session.headers.update({"User-Agent": "Mozilla/5.0 (ResearchAI/0.1)"})
+        # Simple User-Agent works better than "realistic" browser headers
+        # Bing actually blocks requests with full Chrome headers but allows simple ones
+        # Accept-Language ensures English results regardless of server location
+        _global_session.headers.update({
+            "User-Agent": "Mozilla/5.0 (ResearchAI/0.1)",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        
+        # Configure proxy if set
+        if PROXY_URL:
+            _global_session.proxies = {
+                "http": PROXY_URL,
+                "https": PROXY_URL,
+            }
+            log.progress(f"[web_search] Using proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL}")
+    
     return _global_session
+
+
+def _arxiv_rate_limited_get(session, url: str, timeout: int = 10):
+    """Make a rate-limited GET request to arXiv API.
+    
+    arXiv enforces strict rate limits (~1 request per 3 seconds).
+    This function ensures we respect that limit across all workers.
+    """
+    global _arxiv_last_request, _arxiv_backoff_until
+    
+    with _arxiv_lock:
+        now = time.time()
+        
+        # Check if we're in a backoff period from a recent 429
+        if now < _arxiv_backoff_until:
+            wait_time = _arxiv_backoff_until - now
+            log.progress(f"[web_search] arXiv rate limited, waiting {wait_time:.1f}s")
+            time.sleep(wait_time)
+            now = time.time()
+        
+        # Enforce minimum delay between requests
+        elapsed = now - _arxiv_last_request
+        if elapsed < ARXIV_MIN_DELAY_SEC:
+            time.sleep(ARXIV_MIN_DELAY_SEC - elapsed)
+        
+        _arxiv_last_request = time.time()
+    
+    # Make the request outside the lock
+    resp = session.get(url, timeout=timeout)
+    
+    # If we get a 429, set a longer backoff period
+    if resp.status_code == 429:
+        with _arxiv_lock:
+            _arxiv_backoff_until = time.time() + 60  # Back off for 60 seconds
+        log.warning("[web_search] arXiv returned 429 - backing off for 60s")
+    
+    return resp
 
 
 # Global URL content cache: maps URL -> (title, text) to avoid re-fetching same pages
 _url_cache = {}
 _url_cache_hits = 0
+
+# Rotating User-Agents for content fetch retries
+_CONTENT_USER_AGENTS = [
+    "Mozilla/5.0 (ResearchAI/0.1)",  # Simple bot UA (works for many sites)
+    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",  # Googlebot
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",  # Chrome
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",  # Firefox
+]
+
+
+def _fetch_url_content(session, url: str, timeout: int = 12) -> str:
+    """Fetch URL content with retry and rotating User-Agents.
+    
+    Tries multiple User-Agents on failure since some sites block specific UAs.
+    Returns extracted text or empty string on failure.
+    """
+    for i, ua in enumerate(_CONTENT_USER_AGENTS):
+        try:
+            headers = {"User-Agent": ua}
+            r = session.get(url, timeout=timeout, headers=headers, verify=True)
+            r.raise_for_status()
+            
+            # Parse and extract text
+            psoup = BeautifulSoup(r.text, "html.parser")
+            
+            # Remove script/style elements
+            for tag in psoup(["script", "style", "nav", "footer", "header"]):
+                tag.decompose()
+            
+            paragraphs = psoup.find_all("p")
+            text = "\n\n".join(p.get_text(strip=True) for p in paragraphs[:10])
+            
+            # Fallback to raw text if no paragraphs
+            if not text or len(text) < 100:
+                text = psoup.get_text(separator="\n", strip=True)[:6000]
+            
+            if text and len(text) > 50:
+                return text
+                
+        except requests.exceptions.SSLError:
+            # Try without SSL verification as last resort
+            if i == len(_CONTENT_USER_AGENTS) - 1:
+                try:
+                    r = session.get(url, timeout=timeout, headers=headers, verify=False)
+                    psoup = BeautifulSoup(r.text, "html.parser")
+                    paragraphs = psoup.find_all("p")
+                    text = "\n\n".join(p.get_text(strip=True) for p in paragraphs[:10])
+                    if text and len(text) > 50:
+                        return text
+                except Exception:
+                    pass
+        except requests.exceptions.Timeout:
+            # Don't retry timeouts with different UA - site is just slow
+            break
+        except Exception:
+            # Try next UA
+            continue
+    
+    return ""
 
 
 def _extract_real_url(bing_url: str) -> str:
@@ -131,7 +242,12 @@ class WebSearchConnector:
         
         for attempt in range(BING_MAX_RETRIES):
             try:
-                resp = session.get("https://www.bing.com/search", params={"q": query}, timeout=10, headers=headers)
+                # setlang=en ensures English results regardless of server geolocation
+                # Note: mkt param breaks multi-word queries, so we only use setlang
+                resp = session.get("https://www.bing.com/search", params={
+                    "q": query,
+                    "setlang": "en",
+                }, timeout=10, headers=headers)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "html.parser")
                 for item in soup.select("li.b_algo"):
@@ -142,17 +258,10 @@ class WebSearchConnector:
                         if href and title:
                             real_url = _extract_real_url(href)
                             links.append((title, real_url))
-                
-                # Log if Bing returned no results (likely blocked/captcha)
+                # Log if Bing returned no results (helps debug)
                 if not links:
-                    # Check for captcha/block indicators
-                    page_text = resp.text.lower()
-                    if 'captcha' in page_text or 'unusual traffic' in page_text or 'blocked' in page_text:
-                        log.warning(f"[web_search] Bing appears blocked/captcha for query: {query[:50]}...")
-                    else:
-                        log.warning(f"[web_search] Bing returned 0 results for query: {query[:50]}...")
-                
-                # Success - return the links
+                    log.warning(f"[web_search] Bing returned empty results for '{query[:50]}...'")
+                # Return the links (even if empty)
                 return links
             except Exception as e:
                 last_error = e
@@ -166,21 +275,18 @@ class WebSearchConnector:
         return []
 
     def _sync_fetch(self, topic: str, n: int = 3):
-        # Rate limit to avoid overwhelming external services
-        _rate_limit_web_search()
-        
         results = []
         seen_urls = set()
         topic_terms = self._terms(topic)
+        bing_results = 0  # Track how many results came from Bing vs fallback
         try:
             # OPTIMIZATION: Use global session with connection pooling
             s = _get_session()
             links = []
             # Generate contextual query variants that preserve the full meaning
-            # Avoid single-word matches by keeping topic phrases intact
+            # Plain topic first (quoted queries can give poor results on some topics)
             query_variants = [
-                f'"{topic}"',  # Exact phrase search first
-                topic,
+                topic,  # Plain topic first
                 f"{topic} guide",
                 f"{topic} tutorial",
                 f"how to {topic}" if not topic.lower().startswith("how") else topic,
@@ -226,42 +332,43 @@ class WebSearchConnector:
             ordered = ordered[: max(n * 8, 40)]
             # Fetch pages in order until we have n good results
             global _url_cache, _url_cache_hits
+            fetch_ok, fetch_fail = 0, 0
             for title, url in ordered:
                 if len(results) >= n:
                     break
-                try:
-                    # OPTIMIZATION: Check URL cache first
-                    if url in _url_cache:
-                        cached_title, text = _url_cache[url]
-                        _url_cache_hits += 1
-                        if _url_cache_hits % 20 == 0:
-                            log.progress(f"[url_cache] hits={_url_cache_hits}")
-                    else:
-                        r = s.get(url, timeout=10)
-                        psoup = BeautifulSoup(r.text, "html.parser")
-                        paragraphs = psoup.find_all("p")
-                        text = "\n\n".join(p.get_text(strip=True) for p in paragraphs[:8])
-                        if not text:
-                            text = r.text[:5000]
-                        # Cache the fetched content
+                # OPTIMIZATION: Check URL cache first
+                if url in _url_cache:
+                    cached_title, text = _url_cache[url]
+                    _url_cache_hits += 1
+                    if _url_cache_hits % 20 == 0:
+                        log.progress(f"[url_cache] hits={_url_cache_hits}")
+                    fetch_ok += 1
+                else:
+                    # Use robust fetch with retry and rotating UAs
+                    text = _fetch_url_content(s, url)
+                    if text:
                         _url_cache[url] = (title, text)
-                    
-                    if url and url not in seen_urls and text:
-                        score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
-                        # accept slightly lower score to increase diversity but keep relevance
-                        if score >= 1:
-                            results.append({"title": title or url, "url": url, "text": text})
-                            seen_urls.add(url)
-                except Exception as e:
-                    log.warning(f"[web_search] Failed to fetch {url}: {e}")
-                    continue
+                        fetch_ok += 1
+                    else:
+                        fetch_fail += 1
+                
+                if url and url not in seen_urls and text:
+                    score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
+                    # accept slightly lower score to increase diversity but keep relevance
+                    if score >= 1:
+                        results.append({"title": title or url, "url": url, "text": text})
+                        seen_urls.add(url)
+            bing_results = len(results)
+            _log_web_stats("", fetch_ok=fetch_ok, fetch_fail=fetch_fail)
         except Exception as e:
             log.error(f"[web_search] Bing search failed for '{topic}': {e}")
         # If we didn't reach n, fallback to Wikipedia but limit wikipedia dominance
         if len(results) < n:
             try:
-                query = urllib.parse.quote_plus(topic)
-                w_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&srlimit={max(3, (n-len(results))*3)}"
+                # Extract key terms for better Wikipedia search (long topics fail otherwise)
+                search_query = self._extract_search_query(topic)
+                query = urllib.parse.quote_plus(search_query)
+                w_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&srlimit={max(5, (n-len(results))*3)}"
                 w_resp = s.get(w_url, timeout=10)
                 data = w_resp.json()
                 for item in data.get("query", {}).get("search", []):
@@ -278,18 +385,21 @@ class WebSearchConnector:
                     if not page_url:
                         page_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
                     if page_url and page_url not in seen_urls and text:
-                        score = self._relevance_score(topic_terms, f"{title} {text[:1200]}", topic)
-                        if score >= 1:
-                            results.append({"title": title, "url": page_url, "text": text})
-                            seen_urls.add(page_url)
+                        # Wikipedia is a fallback - accept results without strict relevance filtering
+                        # The Wikipedia search API already returns relevant results
+                        results.append({"title": title, "url": page_url, "text": text})
+                        seen_urls.add(page_url)
             except Exception as e:
-                log.error(f"[web_search] Wikipedia fallback failed for '{topic}': {e}")
+                log.error(f"[web_search] Wikipedia fallback failed for '{topic[:50]}': {e}")
         # Fallback 2: arXiv abstracts for research-heavy topics
         if len(results) < n:
             try:
-                q = urllib.parse.quote_plus(topic)
-                a_url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max(3, (n-len(results))*2)}"
-                a_resp = s.get(a_url, timeout=10)
+                # Extract key terms for arXiv search
+                search_query = self._extract_search_query(topic, max_words=5)
+                q = urllib.parse.quote_plus(search_query)
+                a_url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max(5, (n-len(results))*2)}"
+                # Use rate-limited request to avoid 429 errors
+                a_resp = _arxiv_rate_limited_get(s, a_url, timeout=10)
                 if a_resp.status_code == 200:
                     ns = {"atom": "http://www.w3.org/2005/Atom"}
                     root = ET.fromstring(a_resp.text)
@@ -302,20 +412,26 @@ class WebSearchConnector:
                                 link = l.get("href")
                                 break
                         if link and link not in seen_urls and summary:
-                            score = self._relevance_score(topic_terms, f"{title} {summary[:1200]}", topic)
-                            if score >= 1:
-                                results.append({"title": title or link, "url": link, "text": summary})
-                                seen_urls.add(link)
+                            # arXiv is a fallback - accept results without strict relevance filtering
+                            results.append({"title": title or link, "url": link, "text": summary})
+                            seen_urls.add(link)
                         if len(results) >= n:
                             break
+                elif a_resp.status_code == 429:
+                    log.warning(f"[web_search] arXiv rate limited for '{topic[:50]}' - skipping")
             except Exception as e:
-                log.error(f"[web_search] arXiv fallback failed for '{topic}': {e}")
+                log.error(f"[web_search] arXiv fallback failed for '{topic[:50]}': {e}")
         
-        # Log final result count
+        # Track search stats: bing success vs fallback vs failed
         if not results:
+            _log_web_stats("failed")
             log.warning(f"[web_search] No sources found for '{topic}' (Bing + Wikipedia + arXiv all failed)")
-        else:
+        elif bing_results >= n:
+            _log_web_stats("bing")
             log.progress(f"[web_search] Found {len(results)} sources for '{topic[:50]}...'")
+        else:
+            _log_web_stats("fallback")
+            log.progress(f"[web_search] Found {len(results)} sources for '{topic[:50]}...' (with fallback)")
         
         # Rank and return up to n results
         scored = []
@@ -331,6 +447,43 @@ class WebSearchConnector:
         raw = re.findall(r"[a-z0-9]+", (text or "").lower())
         stop = {"the", "and", "for", "with", "that", "this", "from", "into", "what", "when", "where", "best", "how"}
         return {t for t in raw if len(t) > 2 and t not in stop}
+
+    def _extract_search_query(self, topic: str, max_words: int = 8) -> str:
+        """Extract key search terms from a long topic for API queries.
+        
+        Long natural language topics like 'What are the best uses for llms?...'
+        need to be shortened to key terms like 'llm uses automation python'.
+        """
+        # Remove common question words and filler
+        stop_words = {
+            'what', 'are', 'the', 'best', 'uses', 'for', 'how', 'to', 'can', 'i',
+            'with', 'and', 'or', 'is', 'in', 'of', 'a', 'an', 'that', 'this',
+            'give', 'me', 'lots', 'ideas', 'preferably', 'please', 'would', 'like',
+            'some', 'any', 'other', 'others', 'etc', 'e', 'g', 'such', 'as',
+            'infinite', 'token', 'time'  # Too generic
+        }
+        
+        # Extract words, keeping order initially
+        words = re.findall(r"[a-z0-9]+", topic.lower())
+        keywords = [w for w in words if w not in stop_words and len(w) > 2]
+        
+        # Deduplicate while preserving order
+        seen = set()
+        unique_keywords = []
+        for w in keywords:
+            if w not in seen:
+                seen.add(w)
+                unique_keywords.append(w)
+        
+        # Take first N keywords (preserves topic order/importance)
+        selected = unique_keywords[:max_words]
+        
+        # If we got very few keywords, be more lenient
+        if len(selected) < 3:
+            # Include shorter words
+            selected = [w for w in words if w not in stop_words and len(w) > 1][:max_words]
+        
+        return ' '.join(selected) if selected else topic[:100]
 
     def _relevance_score(self, topic_terms, text: str, original_topic: str = ""):
         if not topic_terms:

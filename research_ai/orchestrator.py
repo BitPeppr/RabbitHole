@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import uuid
 
 from .agent import Agent
@@ -19,6 +20,7 @@ class Orchestrator:
         self._stop = False
         self._max_depth = 2
         self._max_children = 2
+        self._start_time = None  # Track job start time for ETA
         self.progress_enabled = os.environ.get("PROGRESS_LOG", "1").lower() not in ("0", "false", "no")
         self.progress_verbose_tasks = os.environ.get("PROGRESS_VERBOSE_TASKS", "1").lower() not in ("0", "false", "no")
         try:
@@ -44,6 +46,7 @@ class Orchestrator:
         # Store for progress estimation
         self._max_depth = max_depth
         self._max_children = max_children
+        self._start_time = time.time()  # Start ETA tracking
         # ensure datastore is initialized
         if not getattr(self.datastore, "conn", None):
             try:
@@ -164,13 +167,15 @@ class Orchestrator:
                     calls = usage.get("calls", 0) if isinstance(usage, dict) else 0
                     tokens = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
                     estimated = self._estimate_total_tasks(self._max_depth, self._max_children)
+                    elapsed = time.time() - self._start_time if self._start_time else 0
                     log.progress_stats(
                         counts.get('pending', 0),
                         counts.get('in_progress', 0),
                         counts.get('done', 0),
                         calls,
                         tokens,
-                        estimated_total=estimated
+                        estimated_total=estimated,
+                        elapsed_sec=elapsed
                     )
                 except Exception as e:
                     log.error(f"heartbeat error: {e}")
