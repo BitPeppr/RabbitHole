@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rabbithole-research"
+dynamic = ["version"]
+description = "Deep research orchestrator - recursive topic exploration with LLM-powered analysis"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Martin Chen"}
+]
+keywords = ["research", "ai", "llm", "orchestrator", "deep-research"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "requests>=2.28.0",
+    "beautifulsoup4>=4.11.0",
+]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.40.0"]
+embeddings = ["sentence-transformers>=2.2.0"]
+all = [
+    "playwright>=1.40.0",
+    "sentence-transformers>=2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Cypher137/RabbitHole"
+Repository = "https://github.com/Cypher137/RabbitHole"
+Issues = "https://github.com/Cypher137/RabbitHole/issues"
+
+[project.scripts]
+rabbithole = "rabbithole.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "rabbithole.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["rabbithole*"]

@@ -1,4 +1,4 @@
-# ResearchAI — Deep Research Orchestrator
+# RabbitHole — Deep Research Orchestrator
 
 > A recursive, multi-agent research system that performs deep research on any topic and generates comprehensive reports. Features fully sequential execution for constant memory usage.
 
@@ -25,7 +25,7 @@
 ### 1. Install (30 seconds)
 
 ```bash
-cd ResearchAI
+cd RabbitHole
 python3 -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
@@ -49,15 +49,15 @@ MAX_CONCURRENT_TASKS=1   # 1=sequential, 4=parallel
 ### 3. Run Research
 
 ```bash
-python -m research_ai.cli "Your research topic here"
+python -m rabbithole.cli "Your research topic here"
 
 # Keep runtime files for debugging (db, cache, artifacts):
-python -m research_ai.cli "Your topic" --no-cleanup
+python -m rabbithole.cli "Your topic" --no-cleanup
 ```
 
 Output saved to: `research_report.md`
 
-Runtime files (db, cache) are stored in `$TMPDIR/researchai` and automatically cleaned up after each run. This keeps the project directory clean for packaging (pipx/homebrew).
+Runtime files (db, cache) are stored in `$TMPDIR/rabbithole` and automatically cleaned up after each run. This keeps the project directory clean for packaging (pipx/homebrew).
 
 ---
 
@@ -69,7 +69,7 @@ See `example output/` for sample reports. Note that "AI Ethics (2 hours)" used d
 
 ## What This Does
 
-ResearchAI creates a **tree of specialized research agents** that recursively explore your topic:
+RabbitHole creates a **tree of specialized research agents** that recursively explore your topic:
 
 ```
 Your Topic: "History of the Byzantine Empire"
@@ -128,7 +128,7 @@ Each agent:
 
 ### 🧹 Clean Runtime
 
-- Runtime files (db, cache) stored in system temp directory (`$TMPDIR/researchai`)
+- Runtime files (db, cache) stored in system temp directory (`$TMPDIR/rabbithole`)
 - Automatic cleanup after each run (configurable via `AUTO_CLEANUP`)
 - Project directory stays clean — ready for pipx/homebrew packaging
 - Content-hash caching for summaries avoids redundant LLM calls
@@ -168,7 +168,7 @@ Each agent:
 1. **Clone or navigate to the project**:
 
    ```bash
-   cd /path/to/ResearchAI
+   cd /path/to/RabbitHole
    ```
 
 2. **Create virtual environment**:
@@ -222,7 +222,7 @@ CONCURRENCY=1       # Number of worker coroutines (usually 1)
 
 # Output and Storage
 OUTPUT_PATH=research_report.md
-DB_PATH=runtime/research_ai/state.db
+DB_PATH=runtime/rabbithole/state.db
 
 # Progress Logging
 PROGRESS_LOG=1                  # Enable progress logs
@@ -386,7 +386,7 @@ The system tries providers in order until it has enough results. If `brave` retu
 ### Basic Usage
 
 ```bash
-python -m research_ai.cli "Your research topic here"
+python -m rabbithole.cli "Your research topic here"
 ```
 
 The system will:
@@ -401,19 +401,19 @@ The system will:
 
 ```bash
 # History
-python -m research_ai.cli "What caused the fall of the Roman Empire?"
+python -m rabbithole.cli "What caused the fall of the Roman Empire?"
 
 # Technology comparison
-python -m research_ai.cli "Compare cloud providers AWS, Azure, and GCP for startups"
+python -m rabbithole.cli "Compare cloud providers AWS, Azure, and GCP for startups"
 
 # Scientific research
-python -m research_ai.cli "Recent advances in quantum computing error correction"
+python -m rabbithole.cli "Recent advances in quantum computing error correction"
 
 # Product research
-python -m research_ai.cli "Best noise-cancelling headphones under $300 in 2024"
+python -m rabbithole.cli "Best noise-cancelling headphones under $300 in 2024"
 
 # Philosophy
-python -m research_ai.cli "Effective altruism philosophical arguments"
+python -m rabbithole.cli "Effective altruism philosophical arguments"
 ```
 
 ### Monitoring Progress
@@ -493,7 +493,7 @@ Result: Memory × agents = CRASH with deep trees
 
 ### The Solution: Global Concurrency Gate
 
-ResearchAI uses `MAX_CONCURRENT_TASKS` to limit operations:
+RabbitHole uses `MAX_CONCURRENT_TASKS` to limit operations:
 
 ```
 With MAX_CONCURRENT_TASKS=1:
@@ -559,12 +559,12 @@ _Assumes 45 seconds per agent average_
 ## Project Structure
 
 ```
-ResearchAI/
+RabbitHole/
 ├── .env                          # Configuration (YOU EDIT THIS)
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
 │
-├── research_ai/                  # Core package
+├── rabbithole/                  # Core package
 │   ├── __init__.py              # Package marker
 │   ├── cli.py                   # Entry point, loads .env
 │   ├── orchestrator.py          # Job manager, worker pool
@@ -579,7 +579,7 @@ ResearchAI/
 │   └── web_search.py            # Web search connector
 │
 ├── runtime/                      # Runtime data (auto-created)
-│   ├── research_ai/
+│   ├── rabbithole/
 │   │   ├── state.db             # SQLite database (auto-created)
 │   │   └── artifacts/           # Cached source documents (SHA-256 filenames)
 │   │       └── *.txt
@@ -593,7 +593,7 @@ ResearchAI/
 
 ### What Each Folder Contains
 
-**`research_ai/`** - Core application code
+**`rabbithole/`** - Core application code
 
 - Main modules for orchestration, agents, LLM, storage
 - **executor_limiter.py**: Controls sequential execution
@@ -626,13 +626,13 @@ ResearchAI/
 | File               | Purpose                                                                 |
 | ------------------ | ----------------------------------------------------------------------- |
 | **`.env`**         | Your main configuration — API key, research parameters, resource limits |
-| **Topic argument** | When running: `python -m research_ai.cli "Your topic here"`             |
+| **Topic argument** | When running: `python -m rabbithole.cli "Your topic here"`             |
 
 ### Files You Might Edit (Advanced)
 
 | File               | Purpose                              |
 | ------------------ | ------------------------------------ |
-| `research_ai/*.py` | If extending the system              |
+| `rabbithole/*.py` | If extending the system              |
 | `.gitignore`       | If you want to track different files |
 
 ### Files/Folders You Shouldn't Touch
@@ -646,7 +646,7 @@ ResearchAI/
 
 ### What is `state.db`?
 
-SQLite database storing jobs, tasks, agents, and results. Located in `runtime/research_ai/`. Created automatically on first run. Safe to delete (will recreate, but loses history).
+SQLite database storing jobs, tasks, agents, and results. Located in `runtime/rabbithole/`. Created automatically on first run. Safe to delete (will recreate, but loses history).
 
 ### Cleaning Up
 
@@ -664,7 +664,7 @@ rm -rf venv/
 ### Do NOT Delete
 
 - `.env` — Your configuration and API key
-- `research_ai/` — Core application code
+- `rabbithole/` — Core application code
 - `requirements.txt` — Dependency list
 - `README.md` — Documentation
 
@@ -672,7 +672,7 @@ rm -rf venv/
 
 | Folder/File        | Purpose             | Edit?    | Delete? |
 | ------------------ | ------------------- | -------- | ------- |
-| `research_ai/`     | Application code    | Advanced | No      |
+| `rabbithole/`     | Application code    | Advanced | No      |
 | `runtime/`         | Runtime data/caches | No       | Yes     |
 | `Example_output/`  | Example reports     | No       | Yes     |
 | `venv/`            | Virtual environment | No       | Yes\*   |
@@ -1011,7 +1011,7 @@ class CustomConnector:
         """Fetch n documents for topic.
         Returns: [{"title": str, "url": str, "text": str}, ...]
         """
-        from research_ai.executor_limiter import get_executor, get_semaphore
+        from rabbithole.executor_limiter import get_executor, get_semaphore
         loop = asyncio.get_event_loop()
         executor = get_executor()
         semaphore = get_semaphore()
@@ -1028,7 +1028,7 @@ class CustomConnector:
 Enable vector embeddings for local retrieval:
 
 ```python
-from research_ai.embeddings import Embeddings
+from rabbithole.embeddings import Embeddings
 
 embeddings = Embeddings()
 orch = Orchestrator(..., embeddings=embeddings)
@@ -1155,7 +1155,7 @@ Built with:
 **Ready to start?** Edit `.env` with your API key and run:
 
 ```bash
-python -m research_ai.cli "Your fascinating research topic"
+python -m rabbithole.cli "Your fascinating research topic"
 ```
 
 Happy researching! 🚀

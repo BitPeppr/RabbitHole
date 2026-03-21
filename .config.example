@@ -1,4 +1,4 @@
-# ResearchAI environment configuration
+# RabbitHole environment configuration
 # Replace the placeholder values with your real keys and preferred defaults.
 
 # =============================================================================
@@ -56,9 +56,9 @@ GROQ_LOG=1
 LLM_FALLBACK_CHAIN=openrouter,groq,google_ai,openai,ollama
 
 # Runtime directory for transient files (db, cache, artifacts)
-# Default: $TMPDIR/researchai (or /tmp/researchai on Linux)
+# Default: $TMPDIR/rabbithole (or /tmp/rabbithole on Linux)
 # Set to a custom path if you want to preserve runtime data between runs
-# RUNTIME_DIR=/tmp/researchai
+# RUNTIME_DIR=/tmp/rabbithole
 
 # Auto-cleanup: delete runtime files (db, cache) after report is generated (1=on, 0=off)
 # Report output (OUTPUT_PATH) is preserved regardless of this setting

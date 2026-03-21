@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Single-file runner that wraps the existing orchestrator to run a single job.
 
-Usage: python -m research_ai.runner --topic "Best 35mm lenses for Nikon Z mount"
+Usage: python -m rabbithole.runner --topic "Best 35mm lenses for Nikon Z mount"
 """
 import argparse
 import asyncio
 import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__) or '.')
-from research_ai.datastore import Datastore
-from research_ai.llm import LLM
-from research_ai.web_search import WebSearchConnector
-from research_ai.orchestrator import Orchestrator
+from rabbithole.datastore import Datastore
+from rabbithole.llm import LLM
+from rabbithole.web_search import WebSearchConnector
+from rabbithole.orchestrator import Orchestrator
 
 
 def main():
